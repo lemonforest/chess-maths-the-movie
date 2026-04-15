@@ -5,7 +5,7 @@
  * by index.html as a module; pulls in the rest of the JS lazily.
  */
 
-import { loadCorpusFromFile, parseGameSpectral, formatBytes } from './loader.js';
+import { loadCorpusFromFile, ensureGameData, closeCorpus, formatBytes } from './loader.js';
 import {
   CHANNELS,
   CHANNEL_BY_ID,
@@ -14,6 +14,7 @@ import {
 } from './spectral.js';
 import { initChart, refreshChart } from './charts.js';
 import { initBoard, refreshBoard } from './board.js';
+import { createVirtualTable } from './virtual-table.js';
 
 /* ------------------------------------------------------------------ *
  * State store
@@ -65,8 +66,10 @@ export function set(patch) {
   if (changed.has('currentPly')) {
     const game = getActiveGame();
     if (game) {
-      const n = game.spectral?.nPlies ?? game.plies.length;
-      state.currentPly = Math.max(0, Math.min(n - 1, state.currentPly | 0));
+      const n = game.spectral?.nPlies ?? game.plies?.length ?? 0;
+      if (n > 0) {
+        state.currentPly = Math.max(0, Math.min(n - 1, state.currentPly | 0));
+      }
     }
   }
 
@@ -170,9 +173,10 @@ async function startLoad(file) {
     if (hash?.channels) state.activeChannels = new Set(hash.channels);
     if (hash?.scale)    state.chartScale = hash.scale;
 
-    // If selected game wasn't pre-parsed, parse now
-    const g = corpus.games[state.currentGameIndex];
-    if (!g.spectral) await parseGameSpectral(corpus, state.currentGameIndex);
+    // If selected game wasn't pre-parsed (only game[0] is eager), parse now.
+    // This guarantees plies + spectral are populated before the viewer reveals.
+    await ensureGameData(corpus, state.currentGameIndex);
+    corpus._lru.pin(state.currentGameIndex);
 
     if (hash?.ply != null) state.currentPly = hash.ply;
     else                   state.currentPly = 0;
@@ -213,31 +217,48 @@ async function startLoad(file) {
 
 /* ------------------------------------------------------------------ *
  * Corpus table
+ *
+ * Rendered via a virtual scroller so sort and scroll stay snappy even at
+ * 15k rows (a month of Lichess). Only ~35 <tr>s live in the DOM at once
+ * regardless of corpus size; the scrollbar reflects the full list via
+ * two tall spacer rows above and below the visible window.
  * ------------------------------------------------------------------ */
-function renderCorpusTable() {
+let corpusTable = null;    // virtual-table handle, populated in initCorpusTable
+
+function initCorpusTable() {
   const tbody = document.querySelector('#game-table tbody');
-  tbody.innerHTML = '';
-  const games = sortedGames();
-  for (const g of games) {
-    const tr = document.createElement('tr');
-    tr.dataset.index = g.index;
-    if (g.index === state.currentGameIndex) tr.classList.add('active');
-    tr.innerHTML = `
-      <td>${g.index}</td>
-      <td>${escape(g.white || '—')}</td>
-      <td>${escape(g.black || '—')}</td>
-      <td class="${resultClass(g.result)}">${escape(g.result || '—')}</td>
-      <td class="num">${g.white_elo || ''}</td>
-      <td class="num">${g.black_elo || ''}</td>
-      <td class="num">${g.n_plies}</td>
-      <td class="num">${formatChi(g.chaos_ratio)}</td>
-      <td class="num">${formatScalar(g.mean_A1)}</td>
-      <td class="num">${formatScalar(g.mean_FT)}</td>
-      <td class="event">${escape(g.event || '')}</td>
-    `;
-    tr.addEventListener('click', () => selectGame(g.index));
-    tbody.appendChild(tr);
-  }
+  const viewport = document.getElementById('game-table-host');
+  corpusTable = createVirtualTable({
+    viewport,
+    tbody,
+    keyFn: (g) => g.index,
+    overscan: 10,
+    renderRow: (g) => {
+      const tr = document.createElement('tr');
+      tr.dataset.index = g.index;
+      tr.innerHTML = `
+        <td>${g.index}</td>
+        <td>${escape(g.white || '—')}</td>
+        <td>${escape(g.black || '—')}</td>
+        <td class="${resultClass(g.result)}">${escape(g.result || '—')}</td>
+        <td class="num">${g.white_elo || ''}</td>
+        <td class="num">${g.black_elo || ''}</td>
+        <td class="num">${g.n_plies}</td>
+        <td class="num">${formatChi(g.chaos_ratio)}</td>
+        <td class="num">${formatScalar(g.mean_A1)}</td>
+        <td class="num">${formatScalar(g.mean_FT)}</td>
+        <td class="event">${escape(g.event || '')}</td>
+      `;
+      tr.addEventListener('click', () => selectGame(g.index));
+      return tr;
+    },
+  });
+}
+
+function renderCorpusTable() {
+  if (!corpusTable) initCorpusTable();
+  corpusTable.setItems(sortedGames());
+  corpusTable.setActive(state.currentGameIndex);
   updateSortIndicators();
 }
 
@@ -270,21 +291,22 @@ function sortedGames() {
 
 async function selectGame(index) {
   if (index === state.currentGameIndex) return;
-  // Lazy parse spectral if needed
-  const g = state.corpus.games[index];
-  if (!g.spectral) {
-    try {
-      await parseGameSpectral(state.corpus, index);
-    } catch (e) {
-      console.error('spectral parse failed:', e);
-      return;
-    }
+  // Lazy-parse NDJSON + spectral on demand. ensureGameData coalesces
+  // concurrent calls on the same index and touches the LRU.
+  try {
+    await ensureGameData(state.corpus, index);
+  } catch (e) {
+    console.error('game data load failed:', e);
+    return;
   }
+  // Repin: active game must never evict even if many others are clicked.
+  state.corpus._lru.unpin(state.currentGameIndex);
+  state.corpus._lru.pin(index);
+
   set({ currentGameIndex: index, currentPly: 0 });
-  // Update active row highlight
-  for (const tr of document.querySelectorAll('#game-table tbody tr')) {
-    tr.classList.toggle('active', parseInt(tr.dataset.index, 10) === index);
-  }
+  // Virtualizer updates the .active class on currently-rendered rows
+  // only — O(visible) rather than O(corpus).
+  if (corpusTable) corpusTable.setActive(index);
   renderChainBreadcrumb();
 }
 
@@ -348,17 +370,45 @@ function renderChainBreadcrumb() {
   const activeGame = state.corpus.manifest.games.find((g) => g.index === state.currentGameIndex);
   const activeSet = new Set([activeGame?.white, activeGame?.black].filter(Boolean));
 
-  for (let i = 0; i < path.length; i++) {
-    if (i > 0) {
+  // Cap the rendered breadcrumb so a hypothetical 15k-long chain
+  // doesn't blow up the header. Always keep the first, last, and
+  // active-adjacent nodes visible; elide the rest with an ellipsis.
+  const MAX_VISIBLE = 8;
+  let visible;
+  if (path.length <= MAX_VISIBLE) {
+    visible = path.map((p, i) => ({ p, i, kind: 'node' }));
+  } else {
+    const activeIdx = path.findIndex((p) => activeSet.has(p));
+    const anchor = activeIdx >= 0 ? activeIdx : 0;
+    // Window of ~6 nodes centered on the active player, always keeping
+    // the chain's head and tail pinned.
+    const halfWin = 2;
+    const winStart = Math.max(1, anchor - halfWin);
+    const winEnd   = Math.min(path.length - 2, anchor + halfWin);
+    visible = [];
+    visible.push({ p: path[0], i: 0, kind: 'node' });
+    if (winStart > 1) visible.push({ kind: 'ellipsis' });
+    for (let i = winStart; i <= winEnd; i++) visible.push({ p: path[i], i, kind: 'node' });
+    if (winEnd < path.length - 2) visible.push({ kind: 'ellipsis' });
+    visible.push({ p: path[path.length - 1], i: path.length - 1, kind: 'node' });
+  }
+
+  for (let v = 0; v < visible.length; v++) {
+    if (v > 0) {
       const arrow = document.createElement('span');
       arrow.className = 'arrow';
       arrow.textContent = '→';
       host.appendChild(arrow);
     }
+    const entry = visible[v];
     const node = document.createElement('span');
-    node.className = 'node';
-    if (activeSet.has(path[i])) node.classList.add('active');
-    node.textContent = path[i];
+    node.className = 'node' + (entry.kind === 'ellipsis' ? ' ellipsis' : '');
+    if (entry.kind === 'ellipsis') {
+      node.textContent = '…';
+    } else {
+      if (activeSet.has(entry.p)) node.classList.add('active');
+      node.textContent = entry.p;
+    }
     host.appendChild(node);
   }
 }
@@ -415,9 +465,14 @@ function setupDropZone() {
     startLoad(file);
   });
 
-  // Reload button
+  // Reload button — tear down the libarchive worker so we don't leak it
+  // across corpora. closeCorpus is async; kick the UI state change
+  // immediately and let the worker teardown finish in the background.
   document.getElementById('reload-btn').addEventListener('click', () => {
+    const prev = state.corpus;
+    state.corpus = null;
     document.body.className = 'state-landing';
+    if (prev) closeCorpus(prev).catch((e) => console.warn('closeCorpus:', e));
   });
 
   // "Load bundled sample" button — fetches the .7z that ships in the repo
@@ -461,7 +516,8 @@ function setupKeyboard() {
 
     const game = getActiveGame();
     if (!game) return;
-    const n = game.spectral?.nPlies ?? game.plies.length;
+    const n = game.spectral?.nPlies ?? game.plies?.length ?? 0;
+    if (n <= 0) return;
 
     switch (e.key) {
       case 'ArrowLeft':
