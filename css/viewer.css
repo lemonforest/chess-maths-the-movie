@@ -382,14 +382,13 @@ button { font-family: inherit; }
 .viewer-grid {
   display: grid;
   grid-template-columns: 460px 1fr;
-  grid-template-rows: minmax(360px, 1fr) minmax(260px, 0.8fr) auto;
+  grid-template-rows: auto auto auto;
   grid-template-areas:
     "board   heatmap"
     "board   chart"
     "table   table";
   gap: 16px;
-  height: calc(100vh - 16px - 16px - 53px - 36px); /* topbar + footer + viewer padding */
-  min-height: 720px;
+  align-items: stretch;
 }
 
 #board-panel       { grid-area: board; }
@@ -544,7 +543,7 @@ button { font-family: inherit; }
 .heatmap-host {
   position: relative;
   flex: 1 1 auto;
-  min-height: 200px;
+  min-height: 320px;
   overflow: hidden;
 }
 #heatmap-canvas {
@@ -594,7 +593,7 @@ button { font-family: inherit; }
 .chart-host {
   position: relative;
   flex: 1 1 auto;
-  min-height: 200px;
+  min-height: 240px;
   padding: 8px 14px 14px;
 }
 #chart-svg {
@@ -696,6 +695,7 @@ button { font-family: inherit; }
 .table-host {
   flex: 1 1 auto;
   overflow: auto;
+  max-height: 40vh;
 }
 .game-table {
   width: 100%;
