@@ -23,7 +23,7 @@ const chart = {
   host: null,
   tooltip: null,
   togglesHost: null,
-  margin: { top: 10, right: 50, bottom: 22, left: 50 },
+  margin: { top: 14, right: 56, bottom: 28, left: 56 },
   game: null,
   evalSeries: null,   // [{ply, val}]
 };
@@ -118,14 +118,18 @@ function renderChart() {
     }).filter(Boolean);
   }
 
-  const rect = chart.host.getBoundingClientRect();
+  // Measure the SVG's rendered box (which is positioned via CSS inside
+  // chart-host). We set only viewBox and let CSS drive the on-screen size,
+  // so the SVG can't feed its own size back into the host's intrinsic
+  // height (which would cause an unbounded ResizeObserver growth loop in
+  // an auto-sized grid row).
+  const rect = chart.svg.node().getBoundingClientRect();
   const w = Math.max(rect.width, 100);
   const h = Math.max(rect.height, 100);
 
   chart.svg
     .attr('viewBox', `0 0 ${w} ${h}`)
-    .attr('width', w)
-    .attr('height', h);
+    .attr('preserveAspectRatio', 'none');
 
   chart.svg.selectAll('*').remove();
 

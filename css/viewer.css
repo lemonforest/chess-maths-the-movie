@@ -594,9 +594,14 @@ button { font-family: inherit; }
   position: relative;
   flex: 1 1 auto;
   min-height: 240px;
-  padding: 8px 14px 14px;
+  overflow: hidden;
+  /* No padding: the SVG fills the host and its internal chart.margin
+     handles axis gutters. Padding would place the child's containing
+     block at the border edge (not the padding edge), causing misalignment. */
 }
 #chart-svg {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   display: block;
