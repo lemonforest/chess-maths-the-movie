@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Chess Spectral Lattice Fermion Viewer</title>
+  <meta name="description" content="Drop-in spectral analysis instrument for chess corpora. Synchronizes PGN replay with lattice-fermion eigenmode heatmaps and channel energy traces.">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="./lib/chessboard-1.0.0.min.css">
+  <link rel="stylesheet" href="./css/viewer.css">
+
+  <!-- Vendored UMD libs. chessboard.js needs jQuery; positions are driven
+       directly from FEN, so chess.js is not required. -->
+  <script src="./lib/jquery-3.7.1.min.js"></script>
+  <script src="./lib/chessboard-1.0.0.min.js"></script>
+  <script src="./lib/d3-7.9.0.min.js"></script>
+  <script src="./lib/pieces.js"></script>
+</head>
+<body class="state-landing">
+
+  <header id="topbar">
+    <div class="title-block">
+      <h1>SPECTRAL LATTICE FERMION VIEWER</h1>
+      <p class="subtitle">chess corpus instrument · mlehaptics</p>
+    </div>
+    <nav id="topbar-nav">
+      <div id="chain-breadcrumb" class="breadcrumb" aria-label="Player chain"></div>
+      <button id="reload-btn" class="ghost-btn" type="button" title="Load a different corpus">Load corpus</button>
+    </nav>
+  </header>
+
+  <!-- Landing / drop zone -->
+  <section id="drop-zone" aria-label="Drop a .7z spectral corpus">
+    <div class="drop-card">
+      <svg class="drop-frame" viewBox="0 0 600 240" preserveAspectRatio="none" aria-hidden="true">
+        <rect x="2" y="2" width="596" height="236" rx="4" ry="4"
+              fill="none" stroke="currentColor" stroke-width="1.4"
+              stroke-dasharray="14 8" pathLength="100"></rect>
+      </svg>
+      <div class="drop-content">
+        <div class="drop-glyph" aria-hidden="true">
+          <span></span><span></span><span></span><span></span>
+        </div>
+        <div class="drop-text">
+          <strong>Drop <code>.7z</code> spectral corpus</strong>
+          <span class="hint">or <button id="browse-btn" class="link-btn" type="button">click to browse</button></span>
+        </div>
+        <p class="drop-meta">decompresses, parses, and indexes the corpus entirely in your browser · no server, no upload</p>
+      </div>
+      <input id="file-input" type="file" accept=".7z" hidden>
+    </div>
+    <p id="hash-pending" class="hash-note" hidden></p>
+  </section>
+
+  <!-- Loading view -->
+  <section id="loading-view" hidden aria-live="polite">
+    <div class="loading-card">
+      <div class="loading-head">
+        <span id="loading-filename" class="mono">archive</span>
+        <span id="loading-filesize" class="mono dim">—</span>
+      </div>
+      <div class="progress-bar"><div id="progress-fill"></div></div>
+      <ol id="loading-log" class="phase-log"></ol>
+    </div>
+  </section>
+
+  <!-- Viewer -->
+  <main id="viewer" hidden>
+    <div class="viewer-grid">
+
+      <section id="board-panel" class="panel" aria-label="Chessboard">
+        <div class="panel-header">
+          <h2>BOARD</h2>
+          <span id="board-ply-readout" class="mono dim">ply 0/0</span>
+        </div>
+        <div id="board" class="board-host"></div>
+        <div id="board-controls" class="control-row">
+          <button data-action="first" title="First ply (Home)" type="button">⏮</button>
+          <button data-action="prev"  title="Previous ply (←)" type="button">◄</button>
+          <button data-action="play"  title="Play / pause (Space)" type="button" id="play-btn">▶</button>
+          <button data-action="next"  title="Next ply (→)" type="button">►</button>
+          <button data-action="last"  title="Last ply (End)" type="button">⏭</button>
+          <button data-action="speed" id="speed-btn" type="button" title="Autoplay speed">500ms</button>
+          <button data-action="flip"  title="Flip board" type="button">⇅</button>
+        </div>
+        <dl id="board-info" class="info-grid mono">
+          <dt>Move</dt>      <dd id="info-move">—</dd>
+          <dt>Eval</dt>      <dd id="info-eval">—</dd>
+          <dt>Clock</dt>     <dd id="info-clock">—</dd>
+          <dt>Opening</dt>   <dd id="info-opening">—</dd>
+          <dt>White</dt>     <dd id="info-white">—</dd>
+          <dt>Black</dt>     <dd id="info-black">—</dd>
+          <dt>Result</dt>    <dd id="info-result">—</dd>
+        </dl>
+      </section>
+
+      <section id="heatmap-panel" class="panel" aria-label="Spectral heatmap">
+        <div class="panel-header">
+          <h2>SPECTRAL HEATMAP</h2>
+          <span id="heatmap-meta" class="mono dim">—</span>
+        </div>
+        <div id="channel-toggles" class="channel-row" role="group" aria-label="Heatmap channel"></div>
+        <div id="heatmap-host" class="heatmap-host">
+          <canvas id="heatmap-canvas"></canvas>
+          <svg id="heatmap-overlay" aria-hidden="true"></svg>
+          <div id="heatmap-tooltip" class="tooltip mono" hidden></div>
+        </div>
+      </section>
+
+      <section id="chart-panel" class="panel" aria-label="Channel energy traces">
+        <div class="panel-header">
+          <h2>CHANNEL ENERGY</h2>
+          <div class="chart-controls">
+            <div id="chart-channel-toggles" class="channel-row tight" role="group" aria-label="Trace channels"></div>
+            <div class="seg-control" role="group" aria-label="Y-axis scale">
+              <button data-scale="z"      class="seg-btn active" type="button">z-score</button>
+              <button data-scale="log"    class="seg-btn" type="button">log</button>
+              <button data-scale="linear" class="seg-btn" type="button">linear</button>
+            </div>
+            <label class="overlay-toggle">
+              <input id="eval-overlay-toggle" type="checkbox" checked>
+              <span>Eval overlay</span>
+            </label>
+          </div>
+        </div>
+        <div id="chart-host" class="chart-host">
+          <svg id="chart-svg" aria-hidden="true"></svg>
+          <div id="chart-tooltip" class="tooltip mono" hidden></div>
+        </div>
+      </section>
+
+      <section id="game-table-panel" class="panel" aria-label="Corpus games">
+        <div class="panel-header">
+          <h2>CORPUS</h2>
+          <span id="corpus-meta" class="mono dim">—</span>
+        </div>
+        <div id="game-table-host" class="table-host">
+          <table id="game-table" class="game-table mono">
+            <thead>
+              <tr>
+                <th data-sort="index" class="sortable">#</th>
+                <th data-sort="white" class="sortable">White</th>
+                <th data-sort="black" class="sortable">Black</th>
+                <th data-sort="result">Result</th>
+                <th data-sort="white_elo" class="num sortable">W·Elo</th>
+                <th data-sort="black_elo" class="num sortable">B·Elo</th>
+                <th data-sort="n_plies" class="num sortable">Plies</th>
+                <th data-sort="chaos_ratio" class="num sortable">χ</th>
+                <th data-sort="mean_A1" class="num sortable">⟨A₁⟩</th>
+                <th data-sort="mean_FT" class="num sortable">⟨F⟩</th>
+                <th data-sort="event">Event</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+    </div>
+  </main>
+
+  <div id="narrow-warning" hidden>
+    <p>This instrument is desktop-first. Open at ≥ 1100&nbsp;px width for the full layout.</p>
+  </div>
+
+  <footer id="footer">
+    <span>Chess Spectral Lattice Fermion · mlehaptics project · 2026</span>
+    <span class="mono dim" id="version-tag">spectralz v2 · 10 channels × 64 modes</span>
+  </footer>
+
+  <script type="module" src="./js/app.js"></script>
+</body>
+</html>
