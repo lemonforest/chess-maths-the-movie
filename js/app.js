@@ -179,8 +179,13 @@ async function renderDatasetList() {
       try {
         await loadBundledCorpus(c.file);
       } catch (err) {
-        btn.disabled = false;
         alert(`Could not load ${c.file}: ${err?.message || err}`);
+      } finally {
+        // Re-enable so the card is clickable again after the user hits
+        // "Load corpus" (reload) to return to the landing screen. The
+        // disabled state during load still guards against accidental
+        // double-clicks while the card is still on screen.
+        btn.disabled = false;
       }
     });
     list.appendChild(li);
