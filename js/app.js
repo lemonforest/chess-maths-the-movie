@@ -16,6 +16,9 @@ import { initChart, refreshChart } from './charts.js';
 import { initBoard, refreshBoard } from './board.js';
 import { createVirtualTable } from './virtual-table.js';
 
+/** Canonical app version. Bump here, in README, and tag the commit. */
+export const APP_VERSION = 'v0.2.0';
+
 /* ------------------------------------------------------------------ *
  * State store
  * ------------------------------------------------------------------ */
@@ -640,6 +643,12 @@ function init() {
 
   // Initial UI state
   document.body.className = 'state-landing';
+
+  // Stamp the app version into the footer (single source of truth in JS).
+  const versionTag = document.getElementById('version-tag');
+  if (versionTag) {
+    versionTag.textContent = `viewer ${APP_VERSION} · spectralz v2 · 10 channels × 64 modes`;
+  }
 
   // Discover bundled corpora from dataset/index.json and render cards.
   // Fire-and-forget — the drop zone works regardless of whether this
