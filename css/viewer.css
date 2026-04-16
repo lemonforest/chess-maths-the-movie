@@ -489,12 +489,14 @@ button { font-family: inherit; }
 }
 
 /* Channel overlay stacking: squares < overlay < pieces/notation.
-   Chessboard.js square and piece elements have position: relative/absolute
-   but no z-index, so without these the overlay (last child) would paint on
-   top of pieces. Lifting pieces + notation above the overlay keeps them
-   legible at high |t|. */
-#board .board-overlay { z-index: 1; }
-#board img[data-piece]      { z-index: 2; }   /* chessboard.js sets position:absolute inline */
+   Chessboard.js renders piece <img>s as static children of their square at
+   rest, so z-index alone is ignored — it only applies to positioned
+   elements. Force position:relative on pieces so z-index lifts them above
+   the overlay. (Inline position:absolute set during piece animations
+   overrides this harmlessly.) Notation is already position:absolute via
+   chessboard.css, so z-index there takes effect directly. */
+#board .board-overlay       { z-index: 1; }
+#board img[data-piece]      { position: relative; z-index: 2; }
 #board [class*="notation-"] { z-index: 2; }
 
 .control-row {
