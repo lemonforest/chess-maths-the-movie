@@ -31,6 +31,7 @@ export const state = {
   autoplay: { running: false, intervalMs: 500 },
   evalOverlay: true,
   boardOverlay: false,       // project the current heatmap channel onto the board
+  overlayTransform: 'abs',   // 'abs' | 'delta' | 'log' | 'z' — perceptual mode for the overlay
   plainBoard: false,         // flatten the checker pattern so overlay tints read cleanly
 
   chartScale: 'z',
@@ -107,6 +108,9 @@ function syncHash() {
     params.set('ch', [...state.activeChannels].join(','));
   }
   if (state.chartScale !== 'z') params.set('scale', state.chartScale);
+  if (state.overlayTransform && state.overlayTransform !== 'abs') {
+    params.set('tx', state.overlayTransform);
+  }
   history.replaceState(null, '', '#' + params.toString());
 }
 
@@ -120,6 +124,7 @@ function readHash() {
     view: params.get('view') || null,
     channels: params.get('ch')   ? params.get('ch').split(',').filter(Boolean) : null,
     scale:    params.get('scale') || null,
+    transform: params.get('tx') || null,
   };
 }
 
@@ -236,6 +241,7 @@ async function startLoad(file) {
     if (hash?.view)     state.heatmapView = hash.view;
     if (hash?.channels) state.activeChannels = new Set(hash.channels);
     if (hash?.scale)    state.chartScale = hash.scale;
+    if (hash?.transform) state.overlayTransform = hash.transform;
 
     // If selected game wasn't pre-parsed (only game[0] is eager), parse now.
     // This guarantees plies + spectral are populated before the viewer reveals.
@@ -267,6 +273,7 @@ async function startLoad(file) {
     emit('activeChannels');
     emit('chartScale');
     emit('evalOverlay');
+    emit('overlayTransform');
     emit('ply');
     syncHash();
   } catch (err) {

@@ -19,7 +19,7 @@
 import { state, on as subscribe, set as setState, getActiveGame } from './app.js';
 import { createOthelloDriver } from './othello-board.js';
 import { attachChessOverlay } from './chess-overlay.js';
-import { getOverlayForPly } from './spectral.js';
+import { getOverlayForPly, OVERLAY_TRANSFORM_IDS, OVERLAY_TRANSFORM_LABELS } from './spectral.js';
 
 const STARTING_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
@@ -80,6 +80,11 @@ export function initBoard(rootIds = {
       btn.setAttribute('aria-pressed', state.boardOverlay ? 'true' : 'false');
       btn.classList.toggle('active', state.boardOverlay);
     }
+  });
+  subscribe('overlayTransform', () => {
+    syncOverlay();
+    const btn = document.querySelector('button[data-action="overlay-mode"]');
+    if (btn) btn.textContent = OVERLAY_TRANSFORM_LABELS[state.overlayTransform] || state.overlayTransform;
   });
   subscribe('plainBoard', () => {
     const host = document.getElementById(board.hostId);
@@ -195,6 +200,12 @@ function handleAction(action) {
       break;
     case 'overlay': setState({ boardOverlay: !state.boardOverlay }); break;
     case 'plain':   setState({ plainBoard: !state.plainBoard });     break;
+    case 'overlay-mode': {
+      const ids = OVERLAY_TRANSFORM_IDS;
+      const i = Math.max(0, ids.indexOf(state.overlayTransform));
+      setState({ overlayTransform: ids[(i + 1) % ids.length] });
+      break;
+    }
   }
 }
 
@@ -254,7 +265,7 @@ function syncOverlay() {
   // getOverlayForPly returns null for ALL/FIBER views or missing data,
   // which the drivers treat as "hide overlay". The toggle button's pressed
   // state is preserved so returning to a single-channel view re-shows it.
-  const data = getOverlayForPly(game, state.currentPly, state.heatmapView);
+  const data = getOverlayForPly(game, state.currentPly, state.heatmapView, state.overlayTransform);
   board.driver.setOverlay(data);
 }
 
