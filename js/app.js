@@ -13,11 +13,11 @@ import {
   refreshHeatmap,
 } from './spectral.js';
 import { initChart, refreshChart } from './charts.js';
-import { initBoard, refreshBoard } from './board.js';
+import { initBoard, refreshBoard, stopAutoplay } from './board.js';
 import { createVirtualTable } from './virtual-table.js';
 
 /** Canonical app version. Bump here, in README, and tag the commit. */
-export const APP_VERSION = 'v0.3.0';
+export const APP_VERSION = 'v0.3.1';
 
 /* ------------------------------------------------------------------ *
  * State store
@@ -58,7 +58,7 @@ export function emit(event) {
 /** Apply a partial state update and emit events for whatever changed.
  *  Emits both the canonical key name and short aliases (game, ply). */
 export function set(patch) {
-  let changed = new Set();
+  const changed = new Set();
   for (const [k, v] of Object.entries(patch)) {
     if (v && typeof v === 'object') {
       state[k] = v;          // always treat object updates as changes
@@ -135,6 +135,19 @@ function readHash() {
  *  scripts/build-dataset-index.mjs — rerun after adding a .7z). */
 const DATASET_INDEX_PATH = './dataset/index.json';
 
+/** Coerce any thrown value into a human-readable string. Plain objects with
+ *  no useful toString() otherwise render as "[object Object]" in alert(). */
+function formatErr(e) {
+  if (e == null) return 'unknown error';
+  if (typeof e === 'string') return e;
+  if (e instanceof Error) return e.message || String(e);
+  if (typeof e === 'object') {
+    if (typeof e.message === 'string' && e.message) return e.message;
+    try { return JSON.stringify(e); } catch { /* fallthrough */ }
+  }
+  return String(e);
+}
+
 /** Fetch a bundled .7z from the dataset/ folder and feed it through startLoad. */
 async function loadBundledCorpus(filename) {
   const url = new URL(`./dataset/${filename}`, document.baseURI).href;
@@ -161,9 +174,14 @@ async function renderDatasetList() {
   let index;
   try {
     const resp = await fetch(DATASET_INDEX_PATH, { cache: 'no-cache' });
-    if (!resp.ok) return;
+    if (!resp.ok) {
+      // 404 is the expected "no bundled corpora" case — stay silent.
+      if (resp.status !== 404) console.warn(`dataset index: HTTP ${resp.status}`);
+      return;
+    }
     index = await resp.json();
-  } catch {
+  } catch (e) {
+    console.warn('dataset index:', formatErr(e));
     return;
   }
   const corpora = Array.isArray(index?.corpora) ? index.corpora : [];
@@ -190,7 +208,7 @@ async function renderDatasetList() {
       try {
         await loadBundledCorpus(c.file);
       } catch (err) {
-        alert(`Could not load ${c.file}: ${err?.message || err}`);
+        alert(`Could not load ${c.file}: ${formatErr(err)}`);
       } finally {
         // Re-enable so the card is clickable again after the user hits
         // "Load corpus" (reload) to return to the landing screen. The
@@ -280,7 +298,7 @@ async function startLoad(file) {
     console.error('corpus load failed:', err);
     const li = document.createElement('li');
     li.className = 'err';
-    li.textContent = 'Failed: ' + (err?.message || err);
+    li.textContent = 'Failed: ' + formatErr(err);
     log.appendChild(li);
     setTimeout(() => { document.body.className = 'state-landing'; }, 3500);
   }
@@ -362,6 +380,11 @@ function sortedGames() {
 
 async function selectGame(index) {
   if (index === state.currentGameIndex) return;
+  // Stop autoplay synchronously before we swap games. The board panel also
+  // stops autoplay in its 'game' subscriber, but that runs after set() emits
+  // — racing with any stale timer tick that fires between selectGame and the
+  // emit. Calling stopAutoplay first removes the ordering dependency.
+  stopAutoplay();
   // Lazy-parse NDJSON + spectral on demand. ensureGameData coalesces
   // concurrent calls on the same index and touches the LRU.
   try {
@@ -539,11 +562,18 @@ function setupDropZone() {
   // Reload button — tear down the libarchive worker so we don't leak it
   // across corpora. closeCorpus is async; kick the UI state change
   // immediately and let the worker teardown finish in the background.
-  document.getElementById('reload-btn').addEventListener('click', () => {
+  // Disable the button while teardown is pending so a rapid mash can't
+  // start a second teardown against an already-detached handle.
+  const reloadBtn = document.getElementById('reload-btn');
+  reloadBtn.addEventListener('click', () => {
     const prev = state.corpus;
     state.corpus = null;
     document.body.className = 'state-landing';
-    if (prev) closeCorpus(prev).catch((e) => console.warn('closeCorpus:', e));
+    if (!prev) return;
+    reloadBtn.disabled = true;
+    closeCorpus(prev)
+      .catch((e) => console.warn('closeCorpus:', formatErr(e)))
+      .finally(() => { reloadBtn.disabled = false; });
   });
 
   // Bundled-corpora cards are rendered in init() → renderDatasetList()
@@ -581,36 +611,42 @@ function setupKeyboard() {
       case 'ArrowLeft':
         set({ currentPly: Math.max(0, state.currentPly - 1) });
         e.preventDefault();
-        break;
+        return;
       case 'ArrowRight':
         set({ currentPly: Math.min(n - 1, state.currentPly + 1) });
         e.preventDefault();
-        break;
+        return;
       case 'Home':
         set({ currentPly: 0 });
         e.preventDefault();
-        break;
+        return;
       case 'End':
         set({ currentPly: n - 1 });
         e.preventDefault();
-        break;
+        return;
       case ' ':
+        // Let native space-on-button activate when a button is focused;
+        // intercept only when focus is on the body / a non-button element.
+        if (document.activeElement && document.activeElement.tagName === 'BUTTON') return;
         document.querySelector('button[data-action="play"]').click();
         e.preventDefault();
-        break;
+        return;
       case 'Escape':
         if (state.autoplay.running) {
           document.querySelector('button[data-action="play"]').click();
         }
         e.preventDefault();
-        break;
+        return;
     }
 
-    // Game number shortcuts (1–9, 0=10)
+    // Game number shortcuts (1–9, 0=10). Only reached if no switch case fired.
     if (/^[0-9]$/.test(e.key)) {
       const wantIdx = e.key === '0' ? 10 : parseInt(e.key, 10);
       const exists  = state.corpus.games[wantIdx];
-      if (exists) selectGame(wantIdx);
+      if (exists) {
+        selectGame(wantIdx);
+        e.preventDefault();
+      }
     }
   });
 }

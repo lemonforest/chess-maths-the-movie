@@ -102,7 +102,9 @@ export function initBoard(rootIds = {
     // Seg-control: mark the active transform, matching the chart panel's
     // z-score/log/linear pattern (see charts.js).
     document.querySelectorAll('#board-panel .seg-control [data-tx]').forEach((btn) => {
-      btn.classList.toggle('active', btn.dataset.tx === state.overlayTransform);
+      const active = btn.dataset.tx === state.overlayTransform;
+      btn.classList.toggle('active', active);
+      btn.setAttribute('aria-pressed', active ? 'true' : 'false');
     });
   });
   subscribe('plainBoard', () => {
@@ -252,6 +254,11 @@ function stopAutoplay() {
     setState({ autoplay: { ...state.autoplay, running: false } });
   }
 }
+
+// Exposed so app.js can stop the timer synchronously when switching games
+// via hotkey, without relying on the implicit ordering of the board panel's
+// 'game' subscriber.
+export { stopAutoplay };
 
 function cycleSpeed() {
   const i = board.speeds.indexOf(state.autoplay.intervalMs);

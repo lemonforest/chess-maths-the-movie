@@ -170,16 +170,22 @@ export async function loadCorpusFromFile(file, onProgress = () => {}) {
   return corpus;
 }
 
-/** Tear down a corpus: close the libarchive worker and drop parsed state. */
+/** Tear down a corpus: close the libarchive worker and drop parsed state.
+ *  Idempotent — safe to call twice; the second call resolves to the first
+ *  call's pending promise so a rapid reload-button mash doesn't double-close. */
 export async function closeCorpus(corpus) {
   if (!corpus || !corpus._handle) return;
-  try {
-    await corpus._handle.archive.close();
-  } catch (e) {
-    console.warn('archive.close:', e);
-  }
-  corpus._handle = null;
-  corpus._lru && corpus._lru.clear();
+  if (corpus._closing) return corpus._closing;
+  corpus._closing = (async () => {
+    try {
+      await corpus._handle.archive.close();
+    } catch (e) {
+      console.warn('archive.close:', e);
+    }
+    corpus._handle = null;
+    corpus._lru && corpus._lru.clear();
+  })();
+  return corpus._closing;
 }
 
 /* ------------------------------------------------------------------ *
@@ -324,14 +330,16 @@ function resolvePath(fileMap, baseDir, relPath) {
 function parseNdjson(text) {
   const lines = text.split('\n');
   const plies = [];
+  let skipped = 0;
   for (const line of lines) {
     if (!line) continue;
     let obj;
-    try { obj = JSON.parse(line); } catch { continue; }
+    try { obj = JSON.parse(line); } catch { skipped++; continue; }
     if (obj.bridge_version || obj.type === 'game_header') continue;
-    if (typeof obj.ply !== 'number') continue;
+    if (typeof obj.ply !== 'number') { skipped++; continue; }
     plies.push(obj);
   }
+  if (skipped) console.warn(`parseNdjson: skipped ${skipped} malformed line(s)`);
   // Ensure ply array is dense + ordered
   plies.sort((a, b) => a.ply - b.ply);
   return plies;
