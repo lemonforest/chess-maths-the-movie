@@ -19,7 +19,7 @@
 import { state, on as subscribe, set as setState, getActiveGame } from './app.js';
 import { createOthelloDriver } from './othello-board.js';
 import { attachChessOverlay } from './chess-overlay.js';
-import { getOverlayForPly, OVERLAY_TRANSFORM_IDS, OVERLAY_TRANSFORM_LABELS } from './spectral.js';
+import { getOverlayForPly, OVERLAY_TRANSFORM_IDS } from './spectral.js';
 
 const STARTING_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
@@ -44,14 +44,30 @@ export function initBoard(rootIds = {
   // loaded corpus declares variant === "othello".
   _installDriver('chess');
 
-  // Wire control buttons
+  // Wire control buttons (playback row below the board)
   const controlsHost = document.getElementById(rootIds.controls);
   controlsHost.addEventListener('click', (evt) => {
     const btn = evt.target.closest('button[data-action]');
     if (!btn) return;
-    const action = btn.dataset.action;
-    handleAction(action);
+    handleAction(btn.dataset.action);
   });
+
+  // Wire overlay controls hoisted into the panel-header: the ⊞ / ◻ toggles
+  // (handled the same way as playback) and the transform seg-control.
+  const headerHost = document.querySelector('#board-panel .panel-header');
+  if (headerHost) {
+    headerHost.addEventListener('click', (evt) => {
+      const actionBtn = evt.target.closest('button[data-action]');
+      if (actionBtn) {
+        handleAction(actionBtn.dataset.action);
+        return;
+      }
+      const txBtn = evt.target.closest('button[data-tx]');
+      if (txBtn && OVERLAY_TRANSFORM_IDS.includes(txBtn.dataset.tx)) {
+        setState({ overlayTransform: txBtn.dataset.tx });
+      }
+    });
+  }
 
   // Resize: the chess driver needs an explicit resize call; the othello
   // driver scales with its container via SVG viewBox and no-ops here.
@@ -83,8 +99,11 @@ export function initBoard(rootIds = {
   });
   subscribe('overlayTransform', () => {
     syncOverlay();
-    const btn = document.querySelector('button[data-action="overlay-mode"]');
-    if (btn) btn.textContent = OVERLAY_TRANSFORM_LABELS[state.overlayTransform] || state.overlayTransform;
+    // Seg-control: mark the active transform, matching the chart panel's
+    // z-score/log/linear pattern (see charts.js).
+    document.querySelectorAll('#board-panel .seg-control [data-tx]').forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.tx === state.overlayTransform);
+    });
   });
   subscribe('plainBoard', () => {
     const host = document.getElementById(board.hostId);
@@ -200,12 +219,6 @@ function handleAction(action) {
       break;
     case 'overlay': setState({ boardOverlay: !state.boardOverlay }); break;
     case 'plain':   setState({ plainBoard: !state.plainBoard });     break;
-    case 'overlay-mode': {
-      const ids = OVERLAY_TRANSFORM_IDS;
-      const i = Math.max(0, ids.indexOf(state.overlayTransform));
-      setState({ overlayTransform: ids[(i + 1) % ids.length] });
-      break;
-    }
   }
 }
 

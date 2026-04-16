@@ -457,6 +457,8 @@ button { font-family: inherit; }
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
   border-bottom: 1px solid var(--line);
   background: var(--bg-2);
   flex: 0 0 auto;
@@ -467,6 +469,42 @@ button { font-family: inherit; }
   letter-spacing: 0.18em;
   font-weight: 600;
   color: var(--fg-1);
+}
+
+/* Inline controls tucked into a panel's title bar (board overlay buttons,
+   heatmap channel picker, etc.). Same pattern as `.chart-controls`, just
+   scoped so the sibling <h2> and the controls cleanly split the row. */
+.header-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+/* Small-icon buttons for panel-header controls — matches the control-row
+   button look without depending on that wrapper's padding/border. */
+.hdr-btn {
+  background: var(--bg-1);
+  color: var(--fg-1);
+  border: 1px solid var(--line);
+  padding: 4px 9px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 100ms, color 100ms, border-color 100ms;
+}
+.hdr-btn:hover {
+  background: var(--bg-3);
+  color: var(--fg-0);
+  border-color: var(--line-strong);
+}
+.hdr-btn.active,
+.hdr-btn[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--bg-0);
+  border-color: var(--accent);
 }
 
 /* ------------------------------------------------------------------------- *
