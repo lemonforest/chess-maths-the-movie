@@ -255,48 +255,72 @@ export async function ensureGameData(corpus, gameIndex) {
     // click this session) may have already cached the bytes, in which
     // case we skip the libarchive worker entirely. Otherwise extract
     // from the archive and cache the bytes on the way through.
+    //
+    // If OPFS bytes are present but fail to parse (v0.4.x left partial
+    // or truncated files after a crashed phase-B expansion), we
+    // transparently fall through to the archive and overwrite the bad
+    // cache entry. This auto-heals any stale state from prior versions.
     const dir = corpus._opfsDir;
     const ndjsonOpfsPath   = `games/${gameIndex}.ndjson`;
     const spectralOpfsPath = `games/${gameIndex}.spectralz.gz`;
 
     if (!game.plies) {
-      let text = null;
+      let plies = null;
       if (dir && await opfsFileExists(dir, ndjsonOpfsPath)) {
-        const f = await opfsRead(dir, ndjsonOpfsPath);
-        text = await f.text();
-      } else if (game._ndjsonPath) {
+        try {
+          const f = await opfsRead(dir, ndjsonOpfsPath);
+          const text = await f.text();
+          if (!text) throw new Error('empty ndjson in OPFS cache');
+          plies = parseNdjson(text);
+          if (!plies.length) throw new Error('no plies parsed from OPFS ndjson');
+        } catch (e) {
+          console.warn(`OPFS ndjson cache bad for game ${gameIndex}; re-extracting:`, e);
+          plies = null;
+        }
+      }
+      if (!plies) {
+        if (!game._ndjsonPath) {
+          throw new Error(`game ${gameIndex} ndjson missing (no archive fallback)`);
+        }
         const ndjsonFile = await extractByPath(corpus, game._ndjsonPath, 'ndjson');
-        text = await ndjsonFile.text();
+        const text = await ndjsonFile.text();
+        plies = parseNdjson(text);
         if (dir) {
           try { await opfsWrite(dir, ndjsonOpfsPath, new TextEncoder().encode(text)); }
           catch (e) { console.warn('OPFS ndjson cache-write failed:', e); }
         }
-      } else {
-        throw new Error(`game ${gameIndex} ndjson missing (no archive fallback)`);
       }
-      if (text != null) game.plies = parseNdjson(text);
+      game.plies = plies;
     }
 
     if (!game.spectral) {
-      let buf = null;
+      let spectral = null;
       if (dir && await opfsFileExists(dir, spectralOpfsPath)) {
-        const f = await opfsRead(dir, spectralOpfsPath);
-        buf = await f.arrayBuffer();
-      } else if (game._spectralPath) {
+        try {
+          const f = await opfsRead(dir, spectralOpfsPath);
+          const buf = await f.arrayBuffer();
+          if (!buf || buf.byteLength === 0) throw new Error('empty spectralz in OPFS cache');
+          const decompressed = await gunzip(buf);
+          spectral = enrichSpectral(parseSpectralz(decompressed));
+        } catch (e) {
+          console.warn(`OPFS spectralz cache bad for game ${gameIndex}; re-extracting:`, e);
+          spectral = null;
+        }
+      }
+      if (!spectral) {
+        if (!game._spectralPath) {
+          throw new Error(`game ${gameIndex} spectralz missing (no archive fallback)`);
+        }
         const spectralFile = await extractByPath(corpus, game._spectralPath, 'spectralz');
-        buf = await spectralFile.arrayBuffer();
+        const buf = await spectralFile.arrayBuffer();
+        const decompressed = await gunzip(buf);
+        spectral = enrichSpectral(parseSpectralz(decompressed));
         if (dir) {
           try { await opfsWrite(dir, spectralOpfsPath, new Uint8Array(buf)); }
           catch (e) { console.warn('OPFS spectralz cache-write failed:', e); }
         }
-      } else {
-        throw new Error(`game ${gameIndex} spectralz missing (no archive fallback)`);
       }
-      if (buf) {
-        const decompressed = await gunzip(buf);
-        const parsed = parseSpectralz(decompressed);
-        game.spectral = enrichSpectral(parsed);
-      }
+      game.spectral = spectral;
     }
 
     corpus._lru.touch(gameIndex);

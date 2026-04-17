@@ -155,6 +155,97 @@ function buildFakeCorpus(n = CORPUS_SIZE, { extractDelayMs } = {}) {
   return corpus;
 }
 
+/* Minimal OPFS directory-handle polyfill matching the subset of the FS API
+ * that js/opfs.js calls: getDirectoryHandle({create}), getFileHandle({create}),
+ * createWritable().write().close(), getFile().text()/.arrayBuffer(). Backed
+ * by a recursive Map tree so scenario 8 can pre-seed / inspect bytes
+ * without mocking the opfs module (ES module bindings are read-only). */
+function makeFakeOpfsDir(name = '') {
+  const dirs = new Map();
+  const files = new Map();
+  const walkParent = async (path, create) => {
+    const segs = String(path).split('/').filter(Boolean);
+    let here = dir;
+    for (let i = 0; i < segs.length - 1; i++) {
+      here = await here.getDirectoryHandle(segs[i], { create });
+    }
+    return { parent: here, name: segs[segs.length - 1] };
+  };
+  const dir = {
+    name,
+    async getDirectoryHandle(n, opts = {}) {
+      if (!dirs.has(n)) {
+        if (!opts.create) {
+          const e = new Error(`NotFoundError: ${n}`); e.name = 'NotFoundError'; throw e;
+        }
+        dirs.set(n, makeFakeOpfsDir(n));
+      }
+      return dirs.get(n);
+    },
+    async getFileHandle(n, opts = {}) {
+      if (!files.has(n)) {
+        if (!opts.create) {
+          const e = new Error(`NotFoundError: ${n}`); e.name = 'NotFoundError'; throw e;
+        }
+        files.set(n, new Uint8Array(0));
+      }
+      return {
+        name: n,
+        async getFile() {
+          const bytes = files.get(n);
+          return {
+            size: bytes.byteLength,
+            text: async () => new TextDecoder().decode(bytes),
+            arrayBuffer: async () => {
+              const out = new ArrayBuffer(bytes.byteLength);
+              new Uint8Array(out).set(bytes);
+              return out;
+            },
+          };
+        },
+        async createWritable() {
+          const chunks = [];
+          return {
+            async write(data) {
+              if (data == null) return;
+              if (ArrayBuffer.isView(data)) {
+                chunks.push(new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
+              } else if (data && data.constructor && data.constructor.name === 'ArrayBuffer') {
+                chunks.push(new Uint8Array(data));
+              } else if (typeof data === 'string') {
+                chunks.push(new TextEncoder().encode(data));
+              } else if (data && typeof data.arrayBuffer === 'function') {
+                chunks.push(new Uint8Array(await data.arrayBuffer()));
+              } else {
+                chunks.push(new TextEncoder().encode(String(data)));
+              }
+            },
+            async close() {
+              const total = chunks.reduce((s, c) => s + c.byteLength, 0);
+              const out = new Uint8Array(total);
+              let off = 0;
+              for (const c of chunks) { out.set(c, off); off += c.byteLength; }
+              files.set(n, out);
+            },
+          };
+        },
+      };
+    },
+    // Test-only helpers, not used by the production code path.
+    async _writeRaw(path, bytes) {
+      const { parent, name: leaf } = await walkParent(path, true);
+      parent._filesRaw(leaf, bytes);
+    },
+    async _readRaw(path) {
+      const { parent, name: leaf } = await walkParent(path, false).catch(() => ({}));
+      return parent ? parent._filesRawGet(leaf) : null;
+    },
+    _filesRaw(n, bytes) { files.set(n, bytes); },
+    _filesRawGet(n)     { return files.get(n) ?? null; },
+  };
+  return dir;
+}
+
 /* selectGame shim mirroring app.js:381. We don't import app.js because it
  * would drag in board.js / charts.js / chess-overlay.js whose listeners
  * aren't under test here and would require heavier mocking. The shim is
@@ -384,6 +475,40 @@ describe('smoke: large corpus game switching', () => {
     expect(corpus.games[2].loadFailed).toBe(true);
     expect(corpus.games[2].spectral).toBeNull();
     await expect(ensureGameData(corpus, 2)).rejects.toThrow(/quarantined/i);
+  });
+
+  /* Regression: the "games 11+ won't load" symptom users hit after upgrading
+   * from v0.4.x. v0.4.x's crashed phase-B expansion could leave OPFS with
+   * truncated / empty files for games past the prefetch cutoff; v0.5.0's
+   * loader trusted those bytes blindly. v0.5.1 validates OPFS bytes and
+   * falls through to the archive on parse failure (writing the good bytes
+   * back to overwrite the bad cache). */
+  it('scenario 8: bad OPFS spectralz cache falls through to archive and self-heals', async () => {
+    const corpus = buildFakeCorpus(20);
+
+    // Minimal OPFS polyfill matching opfs.js's surface (getDirectoryHandle,
+    // getFileHandle, createWritable, getFile). Pre-seed game 11's spectralz
+    // with 4 bytes of garbage so parseSpectralz fails; ndjson is left unset
+    // so only the spectralz path exercises recovery.
+    const fakeDir = makeFakeOpfsDir();
+    corpus._opfsDir = fakeDir;
+
+    // Seed bad bytes for game 11's spectralz — mimics v0.4.x phase-B leaving
+    // a 4-byte stub after a wedged extract.
+    await fakeDir._writeRaw('games/11.spectralz.gz', new Uint8Array([0, 0, 0, 0]));
+
+    // ensureGameData should detect the bad cache, re-extract from the
+    // archive, and leave game 11 fully loaded.
+    await ensureGameData(corpus, 11);
+    expect(corpus.games[11].spectral).toBeTruthy();
+    expect(corpus.games[11].spectral.nPlies).toBe(N_PLIES);
+    expect(corpus.games[11].loadFailed).toBeFalsy();
+
+    // And the OPFS cache should now hold the GOOD bytes — a subsequent
+    // read would succeed without touching the archive.
+    const cached = await fakeDir._readRaw('games/11.spectralz.gz');
+    expect(cached).toBeTruthy();
+    expect(cached.byteLength).toBeGreaterThan(4);
   });
 
   it('fixture sanity: NDJSON and spectralz round-trip through production parsers', async () => {
