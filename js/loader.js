@@ -315,9 +315,14 @@ async function openWithExpansion({ file, opfsDir, emit }) {
       await prefetchGameToOpfs(corpus, g);
       games[g.index].opfsReady = true;
     } catch (e) {
-      console.warn(`prefetch failed for game ${g.index}:`, e);
-      games[g.index].opfsFailed = true;
-      try { await opfsAppendFailed(opfsDir, g.index); } catch { /* ignore */ }
+      if (isDataError(e)) {
+        console.warn(`prefetch: game ${g.index} is corrupt (quarantining):`, e);
+        games[g.index].opfsFailed = true;
+        try { await opfsAppendFailed(opfsDir, g.index); } catch { /* ignore */ }
+      } else {
+        // Transient — leave pending so phase B or a click retry can pick it up.
+        console.warn(`prefetch: game ${g.index} transient failure (will retry):`, e);
+      }
     }
   }
 
@@ -522,7 +527,10 @@ async function startBackgroundExpansion(corpus) {
   const total = corpus.manifest.games.length;
   let attempted = 0;
   let ok = 0;
-  let failed = 0;
+  let quarantined = 0;
+  let transientFail = 0;
+  const quarantineSamples = [];
+  const transientSamples = [];
 
   for (const g of corpus.manifest.games) {
     const gd = corpus.games[g.index];
@@ -535,11 +543,21 @@ async function startBackgroundExpansion(corpus) {
       ok++;
       notify(corpus, 'gameReady', { gameIndex: g.index, ready: true, failed: false });
     } catch (e) {
-      console.warn(`background expansion failed for game ${g.index}:`, e);
-      gd.opfsFailed = true;
-      failed++;
-      try { await opfsAppendFailed(dir, g.index); } catch { /* ignore */ }
-      notify(corpus, 'gameReady', { gameIndex: g.index, ready: false, failed: true });
+      // Only genuine data-corruption signatures quarantine the game.
+      // Transient errors (OPFS write race, worker hiccup, etc.) leave
+      // opfsReady=false without flipping opfsFailed, so the row stays
+      // in the pending state and a future select-game retries through
+      // ensureGameData's extract path.
+      if (isDataError(e)) {
+        gd.opfsFailed = true;
+        quarantined++;
+        if (quarantineSamples.length < 5) quarantineSamples.push({ index: g.index, msg: String(e.message ?? e) });
+        try { await opfsAppendFailed(dir, g.index); } catch { /* ignore */ }
+        notify(corpus, 'gameReady', { gameIndex: g.index, ready: false, failed: true });
+      } else {
+        transientFail++;
+        if (transientSamples.length < 5) transientSamples.push({ index: g.index, msg: String(e.message ?? e) });
+      }
     }
     notify(corpus, 'expandProgress', { processed: attempted, total });
     // Yield so the main thread can repaint, dispatch game clicks, and
@@ -559,7 +577,20 @@ async function startBackgroundExpansion(corpus) {
     corpus._opfsComplete = true;
   }
   notify(corpus, 'opfsComplete');
-  console.log(`[loader] expansion done: ${ok} ready, ${failed} failed, ${total - attempted} skipped (pre-ready)`);
+  // Structured summary so a devtools paste tells us exactly which games
+  // failed and whether they failed due to bad bytes (quarantined) or a
+  // transient glitch (still pending, click-to-retry).
+  console.log(
+    `[loader] expansion done: ${ok} ready · ${quarantined} corrupt · ${transientFail} transient · ${total - attempted} pre-ready`,
+  );
+  if (quarantined > 0) {
+    console.warn('[loader] quarantined games (bad bytes):', quarantineSamples,
+      quarantined > quarantineSamples.length ? `…and ${quarantined - quarantineSamples.length} more` : '');
+  }
+  if (transientFail > 0) {
+    console.warn('[loader] transient failures (retry on click):', transientSamples,
+      transientFail > transientSamples.length ? `…and ${transientFail - transientSamples.length} more` : '');
+  }
 }
 
 /** Tear down a corpus: close the libarchive worker and drop parsed state.
@@ -678,17 +709,31 @@ export async function ensureGameData(corpus, gameIndex) {
   }
 }
 
-/** Heuristic: is this error a data-format problem (as opposed to a
- *  transient worker glitch)? Data errors → quarantine the game; transient
- *  errors → allow retry. We recognise a stale-archive handle explicitly
- *  (extractByPath already retries through a fresh worker) and treat
- *  everything else as a data error. False positives here just mean a
- *  bad game stays clickable one extra time; false negatives would let a
- *  truly broken game permanently lock out retries. */
+/** Is this error a data-format problem (the corpus actually contains
+ *  bad bytes), as opposed to a transient infrastructure glitch? Data
+ *  errors → quarantine the game; transient errors → let the caller
+ *  retry later. Errs on the side of NOT quarantining so a flaky OPFS
+ *  write or a worker race doesn't permanently sideline good games.
+ *
+ *  Matches on explicit message signatures from the three places that
+ *  can legitimately tell us the bytes are bad:
+ *    - parseSpectralz (our own parser: wrong magic, wrong dim, truncated)
+ *    - gunzip (DecompressionStream / pako failures on corrupt gzip)
+ *    - JSON.parse in parseNdjson (malformed JSON on every line)
+ *  Anything else — OPFS quota, NotFoundError, stale handles, network
+ *  hiccups, our own bugs — is treated as transient. */
 function isDataError(e) {
   if (!e) return false;
   if (isStaleArchiveError(e)) return false;
-  return true;
+  const msg = String(e.message ?? e ?? '');
+  // parseSpectralz self-identifies.
+  if (/Not a spectralz file|spectralz truncated|Unsupported spectralz/i.test(msg)) return true;
+  // DecompressionStream throws TypeError with various phrasings across
+  // engines; the common thread is "decod" or "gzip" or "invalid".
+  if (/decod|gzip|invalid compressed|invalid stored|incorrect header check|unexpected end of (?:input|data|stream)/i.test(msg)) return true;
+  // Our explicit empty-ndjson guard from phase-B validation.
+  if (/empty ndjson/i.test(msg)) return true;
+  return false;
 }
 
 /* ------------------------------------------------------------------ *
@@ -964,12 +1009,24 @@ function enrichSpectral(parsed) {
  * ------------------------------------------------------------------ */
 async function gunzip(buf) {
   if (typeof DecompressionStream === 'function') {
-    const stream = new Response(buf).body.pipeThrough(new DecompressionStream('gzip'));
-    return await new Response(stream).arrayBuffer();
+    try {
+      const stream = new Response(buf).body.pipeThrough(new DecompressionStream('gzip'));
+      return await new Response(stream).arrayBuffer();
+    } catch (e) {
+      // DecompressionStream throws TypeError with an empty message on
+      // several engines (Node, some Chromium builds). Rewrap so the
+      // data-error classifier matches deterministically.
+      const orig = String(e?.message ?? '');
+      throw new Error(`gzip decode failed${orig ? `: ${orig}` : ''}`);
+    }
   }
   // Fallback: pako global if loaded
   if (typeof window !== 'undefined' && window.pako) {
-    return window.pako.ungzip(new Uint8Array(buf)).buffer;
+    try {
+      return window.pako.ungzip(new Uint8Array(buf)).buffer;
+    } catch (e) {
+      throw new Error(`gzip decode failed: ${String(e?.message ?? e)}`);
+    }
   }
   throw new Error('No gzip decompressor available (DecompressionStream missing and pako not loaded)');
 }
