@@ -5,7 +5,7 @@
  * by index.html as a module; pulls in the rest of the JS lazily.
  */
 
-import { loadCorpusFromFile, ensureGameData, closeCorpus, formatBytes, onCorpusEvent } from './loader.js';
+import { loadCorpusFromFile, ensureGameData, closeCorpus, formatBytes } from './loader.js';
 import {
   CHANNELS,
   CHANNEL_BY_ID,
@@ -21,7 +21,7 @@ import { createVirtualTable } from './virtual-table.js';
  *  a stale-cached app.js can't downgrade the displayed version after a
  *  fresh HTML load. Keep this, the HTML tag, README, and package.json in
  *  sync on every release. */
-export const APP_VERSION = 'v0.4.3';
+export const APP_VERSION = 'v0.5.0';
 
 /* ------------------------------------------------------------------ *
  * State store
@@ -276,26 +276,6 @@ async function startLoad(file) {
     // Reveal viewer
     document.body.className = 'state-viewer';
 
-    // Wire up phase-B events. gameReady flips a single row in place;
-    // opfsComplete clears the expanding indicator and does a full
-    // re-render so any rows we missed settle to their final state.
-    const hasPending = Object.values(corpus.games).some(
-      (g) => !g.opfsReady && !g.opfsFailed,
-    );
-    if (hasPending) {
-      setCorpusExpanding(true, `Expanding ${corpus.manifest.games.length} games into local cache…`);
-    }
-    onCorpusEvent(corpus, 'gameReady', ({ gameIndex }) => {
-      updateRowState(gameIndex);
-      refreshCorpusNav();
-    });
-    onCorpusEvent(corpus, 'opfsComplete', () => {
-      setCorpusExpanding(false);
-      // Full re-render picks up any rows whose state changed while
-      // scrolled off-screen.
-      renderCorpusTable();
-    });
-
     // Render initial state
     renderCorpusTable();
     renderChainBreadcrumb();
@@ -350,12 +330,10 @@ function initCorpusTable() {
       const tr = document.createElement('tr');
       tr.dataset.index = g.index;
       const gameRec = state.corpus?.games?.[g.index];
-      const rowState = gameRec?.opfsFailed ? 'failed'
-                     : gameRec?.opfsReady ? 'ready'
-                     : 'pending';
-      tr.dataset.state = rowState;
-      if (rowState === 'failed') tr.title = 'Game data is corrupt — skipped';
-      else if (rowState === 'pending') tr.title = 'Still expanding — not yet available';
+      if (gameRec?.loadFailed) {
+        tr.dataset.state = 'failed';
+        tr.title = 'Game data is corrupt — skipped';
+      }
       tr.innerHTML = `
         <td>${g.index}</td>
         <td>${escape(g.white || '—')}</td>
@@ -371,8 +349,7 @@ function initCorpusTable() {
       `;
       tr.addEventListener('click', () => {
         const rec = state.corpus?.games?.[g.index];
-        if (!rec || rec.opfsFailed) return;     // quarantined; click is a no-op
-        if (!rec.opfsReady) return;             // still expanding
+        if (!rec || rec.loadFailed) return;     // quarantined; click is a no-op
         selectGame(g.index);
       });
       return tr;
@@ -425,10 +402,10 @@ let _selectGameToken = 0;
 
 async function selectGame(index) {
   if (index === state.currentGameIndex) return;
-  // Refuse non-ready games so keyboard / URL / nav-button paths can't
+  // Refuse quarantined games so keyboard / URL / nav-button paths can't
   // route around the row-click gate and hand garbage to the viewer.
   const rec = state.corpus?.games?.[index];
-  if (!rec || rec.opfsFailed || !rec.opfsReady) return;
+  if (!rec || rec.loadFailed) return;
   const token = ++_selectGameToken;
   // Stop autoplay synchronously before we swap games. The board panel also
   // stops autoplay in its 'game' subscriber, but that runs after set() emits
@@ -472,34 +449,6 @@ function setCorpusSwitching(on) {
   el.classList.toggle('active', !!on);
 }
 
-/** Same affordance as setCorpusSwitching, but for the longer-running
- *  phase-B background expansion into OPFS. Runs while extractFiles is
- *  streaming entries; clears when opfsComplete fires. */
-function setCorpusExpanding(on, tooltip) {
-  const el = document.getElementById('corpus-expanding');
-  if (!el) return;
-  el.classList.toggle('active', !!on);
-  if (tooltip != null) el.title = tooltip;
-}
-
-/** Light-touch update: flip a single row's data-state in place so we
- *  don't re-render all 15k rows on every gameReady event. The virtual
- *  table only has ~35 <tr>s live at a time, so in most cases this is a
- *  no-op for offscreen games — their next render picks up the new flag
- *  from state.corpus.games. */
-function updateRowState(gameIndex) {
-  const tbody = document.querySelector('#game-table tbody');
-  if (!tbody) return;
-  const tr = tbody.querySelector(`tr[data-index="${gameIndex}"]`);
-  if (!tr) return;
-  const rec = state.corpus?.games?.[gameIndex];
-  if (!rec) return;
-  const s = rec.opfsFailed ? 'failed' : rec.opfsReady ? 'ready' : 'pending';
-  tr.dataset.state = s;
-  if (s === 'failed')       tr.title = 'Game data is corrupt — skipped';
-  else if (s === 'pending') tr.title = 'Still expanding — not yet available';
-  else                      tr.removeAttribute('title');
-}
 
 function resultClass(r) {
   if (r === '1-0') return 'result-W';
@@ -784,7 +733,7 @@ function setupTableSorting() {
 /** Is game index clickable right now? */
 function isGameReady(idx) {
   const rec = state.corpus?.games?.[idx];
-  return !!(rec && rec.opfsReady && !rec.opfsFailed);
+  return !!(rec && !rec.loadFailed);
 }
 
 function stepGame(delta) {

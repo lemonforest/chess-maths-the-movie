@@ -188,39 +188,6 @@ describe('opfs helpers', () => {
     expect(await opfs.fileExists(dir, 'manifest.json')).toBe(true);
   });
 
-  it('appendText extends an existing file rather than overwriting', async () => {
-    const dir = await opfs.getCorpusDir('k5');
-    await opfs.appendText(dir, '.log', 'a\n');
-    await opfs.appendText(dir, '.log', 'b\n');
-    await opfs.appendText(dir, '.log', 'c\n');
-    const f = await opfs.readFile(dir, '.log');
-    expect(await f.text()).toBe('a\nb\nc\n');
-  });
-
-  it('appendFailed dedupes repeated game indices', async () => {
-    const dir = await opfs.getCorpusDir('k6');
-    await opfs.appendFailed(dir, 3);
-    await opfs.appendFailed(dir, 7);
-    await opfs.appendFailed(dir, 3); // duplicate
-    await opfs.appendFailed(dir, 7); // duplicate
-    await opfs.appendFailed(dir, 42);
-    const failed = await opfs.readFailed(dir);
-    expect([...failed].sort((a, b) => a - b)).toEqual([3, 7, 42]);
-  });
-
-  it('readFailed returns empty Set when .failed is missing', async () => {
-    const dir = await opfs.getCorpusDir('k7');
-    const failed = await opfs.readFailed(dir);
-    expect(failed.size).toBe(0);
-  });
-
-  it('markComplete + isComplete round-trip', async () => {
-    const dir = await opfs.getCorpusDir('k8');
-    expect(await opfs.isComplete(dir)).toBe(false);
-    await opfs.markComplete(dir);
-    expect(await opfs.isComplete(dir)).toBe(true);
-  });
-
   it('writeFile overwrites existing entries', async () => {
     const dir = await opfs.getCorpusDir('k9');
     await opfs.writeFile(dir, 'x.bin', new TextEncoder().encode('first'));

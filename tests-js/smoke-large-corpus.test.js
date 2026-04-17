@@ -355,24 +355,23 @@ describe('smoke: large corpus game switching', () => {
     expect(corpus._handle).toBeNull();
   });
 
-  it('scenario 6: ensureGameData refuses a pre-quarantined (opfsFailed) game', async () => {
+  it('scenario 6: ensureGameData refuses a pre-quarantined (loadFailed) game', async () => {
     const corpus = buildFakeCorpus(20);
-    // Seed the quarantine flag the way phase-B would after a validation
-    // fault during extractFiles — the UI quarantine path must hold even
-    // without a click-time gate.
-    corpus.games[5].opfsFailed = true;
+    // Seed the quarantine flag directly — the UI click-gate mirrors the
+    // same check, but ensureGameData must hold the line for programmatic
+    // entry points (hash nav, keyboard shortcuts, tests).
+    corpus.games[5].loadFailed = true;
     await expect(ensureGameData(corpus, 5)).rejects.toThrow(/quarantined/i);
     expect(corpus.games[5].spectral).toBeNull();
     expect(corpus.games[5].plies).toBeNull();
   });
 
-  it('scenario 7: a parse-time failure marks opfsFailed and bans future loads', async () => {
+  it('scenario 7: a parse-time failure marks loadFailed and bans future loads', async () => {
     const corpus = buildFakeCorpus(5);
     // Replace game[2]'s spectralz extract with a corrupt blob (garbage
-    // header, not a gzip stream). First call should reject with a parse
-    // error; the ensureGameData error branch classifies it as a data
-    // error and sets opfsFailed. The second call should reject with
-    // the quarantine error (short-circuit before attempting extract).
+    // header, not a gzip stream). First call rejects with a gzip decode
+    // error; the ensureGameData catch classifies it as a data error and
+    // sets loadFailed. Second call short-circuits with "quarantined".
     const corrupt = new Uint8Array([0x00, 0x00, 0x00, 0x00]).buffer;
     corpus._handle.compressedMap.set(corpus.games[2]._spectralPath, {
       name: 'g2.spectralz.gz',
@@ -382,10 +381,8 @@ describe('smoke: large corpus game switching', () => {
       }),
     });
     await expect(ensureGameData(corpus, 2)).rejects.toThrow();
-    expect(corpus.games[2].opfsFailed).toBe(true);
+    expect(corpus.games[2].loadFailed).toBe(true);
     expect(corpus.games[2].spectral).toBeNull();
-    // Second attempt short-circuits: "quarantined" wording comes from
-    // the opfsFailed guard at the top of ensureGameData.
     await expect(ensureGameData(corpus, 2)).rejects.toThrow(/quarantined/i);
   });
 

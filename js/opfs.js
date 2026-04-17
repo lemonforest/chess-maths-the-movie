@@ -1,17 +1,14 @@
 /* opfs.js — thin helpers over Origin Private File System.
  *
- * Used by loader.js to cache decompressed corpus entries between sessions
- * so we don't re-run libarchive (and its 25-extract stale-handle bug) on
- * every page load. Layout under the OPFS root:
+ * Used by loader.js to cache per-game decompressed corpus entries between
+ * sessions so repeated clicks on the same game skip the libarchive worker.
+ * Layout under the OPFS root:
  *
  *   corpora/
  *     <cacheKey>/
- *       manifest.json
  *       games/
  *         <index>.ndjson
  *         <index>.spectralz.gz
- *       .failed        newline-separated list of game indices that errored
- *       .complete      empty; written when the background expansion finishes
  *
  * Cache key is derived from filename + size + mtime (see computeCacheKey).
  * No content hashing — a re-downloaded file with new mtime invalidates the
@@ -65,21 +62,6 @@ export async function writeFile(dir, path, data) {
   }
 }
 
-/** Append a text fragment to `<dir>/<path>`. Creates the file if missing.
- *  Used for the rolling `.failed` list. */
-export async function appendText(dir, path, text) {
-  const { parent, name } = await resolveParent(dir, path, true);
-  const fh = await parent.getFileHandle(name, { create: true });
-  const existing = await fh.getFile();
-  const prev = existing.size > 0 ? await existing.text() : '';
-  const w = await fh.createWritable();
-  try {
-    await w.write(prev + text);
-  } finally {
-    await w.close();
-  }
-}
-
 /** Read `<dir>/<path>` and return a File, or null if the entry is missing. */
 export async function readFile(dir, path) {
   const { parent, name } = await resolveParent(dir, path, false).catch(() => ({}));
@@ -99,34 +81,3 @@ export async function fileExists(dir, path) {
   return !!f;
 }
 
-/** Read the `.failed` file and return the set of failed game indices.
- *  Empty set if the file is missing. */
-export async function readFailed(dir) {
-  const out = new Set();
-  const f = await readFile(dir, '.failed');
-  if (!f) return out;
-  const text = await f.text();
-  for (const line of text.split('\n')) {
-    const n = parseInt(line.trim(), 10);
-    if (Number.isFinite(n)) out.add(n);
-  }
-  return out;
-}
-
-/** Record a failed game index. Deduplicates so repeated failures don't
- *  bloat the file. */
-export async function appendFailed(dir, gameIndex) {
-  const known = await readFailed(dir);
-  if (known.has(gameIndex)) return;
-  await appendText(dir, '.failed', `${gameIndex}\n`);
-}
-
-/** Write the .complete marker. Presence of this file means we can skip
- *  libarchive entirely on subsequent opens. */
-export async function markComplete(dir) {
-  await writeFile(dir, '.complete', new Uint8Array(0));
-}
-
-export async function isComplete(dir) {
-  return await fileExists(dir, '.complete');
-}
