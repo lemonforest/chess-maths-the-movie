@@ -50,7 +50,7 @@ const {
 // How many games to fabricate. 15k matches the real lichess_broadcast_2022-11
 // scale (a month of top broadcasts); stays under 10s to build on a laptop.
 const CORPUS_SIZE  = 15_000;
-const LRU_CAPACITY = 50;   // mirrors loader.js
+const LRU_CAPACITY = 10;   // mirrors loader.js
 
 /* ------------------------------------------------------------------ *
  * Build a fake corpus whose _handle.compressedMap returns gzipped
@@ -328,9 +328,9 @@ describe('smoke: large corpus game switching', () => {
     const originalSpectralRef = corpus.games[0].spectral;
     expect(originalSpectralRef).toBeTruthy();
 
-    // Now visit 120 other distinct games. With LRU capacity 50, game[0]
+    // Now visit 40 other distinct games. With LRU capacity 10, game[0]
     // (which is unpinned as soon as we move to game[1]) must get evicted.
-    for (let k = 1; k <= 120; k++) await selectGame(k);
+    for (let k = 1; k <= 40; k++) await selectGame(k);
 
     // game[0] should have been evicted and its fields nulled by the LRU
     // eviction callback (see loader.js lines 150-161).

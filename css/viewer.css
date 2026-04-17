@@ -546,6 +546,22 @@ button { font-family: inherit; }
   color: var(--bg-0);
   border-color: var(--accent);
 }
+.hdr-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+  background: var(--bg-1);
+  color: var(--fg-2);
+  border-color: var(--line);
+}
+
+/* Corpus-panel nav cluster: First/Prev/Next/Last buttons for walking
+   through games. Same visual family as the board control-row (chess
+   player tape deck), realized via `.hdr-btn` so the buttons fit into
+   the title bar's size budget. */
+.corpus-nav {
+  display: inline-flex;
+  gap: 4px;
+}
 
 /* ------------------------------------------------------------------------- *
  * Board panel

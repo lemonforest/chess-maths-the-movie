@@ -349,6 +349,7 @@ function renderCorpusTable() {
   corpusTable.setItems(sortedGames());
   corpusTable.setActive(state.currentGameIndex);
   updateSortIndicators();
+  refreshCorpusNav();
 }
 
 function updateSortIndicators() {
@@ -704,12 +705,83 @@ function setupTableSorting() {
 }
 
 /* ------------------------------------------------------------------ *
+ * Corpus nav — step / jump through the game list
+ *
+ * Walks games in the table's current sort order (not raw index) so
+ * ◄/► tracks what the user actually sees. Clamped at the ends — no
+ * wrap-around, because a 15k-game corpus with accidental wrap would
+ * be a navigation foot-gun.
+ * ------------------------------------------------------------------ */
+function stepGame(delta) {
+  if (!state.corpus) return;
+  const sorted = sortedGames();
+  if (!sorted.length) return;
+  const pos = sorted.findIndex((g) => g.index === state.currentGameIndex);
+  const from = pos >= 0 ? pos : 0;
+  const to = Math.max(0, Math.min(sorted.length - 1, from + delta));
+  if (to === pos) return;
+  const target = sorted[to].index;
+  selectGame(target);
+  if (corpusTable) corpusTable.scrollToKey(target);
+}
+
+function jumpGame(where) {
+  if (!state.corpus) return;
+  const sorted = sortedGames();
+  if (!sorted.length) return;
+  const target = (where === 'first' ? sorted[0] : sorted[sorted.length - 1]).index;
+  if (target === state.currentGameIndex) return;
+  selectGame(target);
+  if (corpusTable) corpusTable.scrollToKey(target);
+}
+
+function refreshCorpusNav() {
+  const host = document.querySelector('.corpus-nav');
+  if (!host) return;
+  const n = state.corpus?.manifest?.games?.length ?? 0;
+  if (n === 0) {
+    host.querySelectorAll('button').forEach((b) => { b.disabled = true; });
+    return;
+  }
+  const sorted = sortedGames();
+  const pos = sorted.findIndex((g) => g.index === state.currentGameIndex);
+  const atFirst = pos <= 0;
+  const atLast  = pos === sorted.length - 1;
+  const set = (action, disabled) => {
+    const b = host.querySelector(`button[data-action="${action}"]`);
+    if (b) b.disabled = disabled;
+  };
+  set('first-game', atFirst);
+  set('prev-game',  atFirst);
+  set('next-game',  atLast);
+  set('last-game',  atLast);
+}
+
+function setupCorpusNav() {
+  const host = document.querySelector('.corpus-nav');
+  if (!host) return;
+  host.addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-action]');
+    if (!btn || btn.disabled) return;
+    switch (btn.dataset.action) {
+      case 'first-game': jumpGame('first'); break;
+      case 'prev-game':  stepGame(-1);      break;
+      case 'next-game':  stepGame(+1);      break;
+      case 'last-game':  jumpGame('last');  break;
+    }
+  });
+  on('game', refreshCorpusNav);
+  refreshCorpusNav();
+}
+
+/* ------------------------------------------------------------------ *
  * Bootstrap
  * ------------------------------------------------------------------ */
 function init() {
   setupDropZone();
   setupKeyboard();
   setupTableSorting();
+  setupCorpusNav();
   initBoard();
   initHeatmap();
   initChart();

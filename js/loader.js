@@ -34,11 +34,12 @@ import { createLRU } from './lru.js';
 const LIBARCHIVE_URL        = new URL('../lib/libarchive/libarchive.js', import.meta.url).href;
 const LIBARCHIVE_WORKER_URL = new URL('../lib/libarchive/worker-bundle.js', import.meta.url).href;
 
-// Cap on parsed game state (game.spectral + game.plies). Roughly
-// 50 games × ~400KB avg ≈ 20MB retained, which leaves plenty of
-// headroom at 15k-game scale. The currently-active game is pinned
-// so it never evicts even if a user clicks through many others.
-const LRU_CAPACITY = 50;
+// Cap on parsed game state (game.spectral + game.plies). At ~400KB per
+// game this keeps the retained heap around 4MB — small enough that even
+// a 15k-game broadcast corpus doesn't pressure the tab's memory after
+// rapid-clicking through many games. The currently-active game is
+// pinned so it never evicts even if a user clicks through many others.
+const LRU_CAPACITY = 10;
 
 let _ArchivePromise = null;
 function importArchive() {

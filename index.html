@@ -167,8 +167,16 @@
       <section id="game-table-panel" class="panel" aria-label="Corpus games">
         <div class="panel-header">
           <h2>CORPUS</h2>
-          <span id="corpus-switching" class="corpus-switching" aria-hidden="true"></span>
-          <span id="corpus-meta" class="mono dim">—</span>
+          <div class="header-controls">
+            <div class="corpus-nav" role="group" aria-label="Navigate games">
+              <button data-action="first-game" class="hdr-btn" type="button" title="First game (sorted order)">⏮</button>
+              <button data-action="prev-game"  class="hdr-btn" type="button" title="Previous game">◄</button>
+              <button data-action="next-game"  class="hdr-btn" type="button" title="Next game">►</button>
+              <button data-action="last-game"  class="hdr-btn" type="button" title="Last game">⏭</button>
+            </div>
+            <span id="corpus-switching" class="corpus-switching" aria-hidden="true"></span>
+            <span id="corpus-meta" class="mono dim">—</span>
+          </div>
         </div>
         <div id="game-table-host" class="table-host">
           <table id="game-table" class="game-table mono">
