@@ -471,6 +471,62 @@ button { font-family: inherit; }
   color: var(--fg-1);
 }
 
+/* Indeterminate "switching game" indicator tucked into the CORPUS title
+   bar. Takes its gradient from the main corpus-load progress-bar
+   (#progress-fill) so the two loading affordances read as one family. */
+.corpus-switching {
+  display: inline-block;
+  width: 72px;
+  height: 2px;
+  margin: 0 4px;
+  background: var(--bg-3);
+  overflow: hidden;
+  position: relative;
+  opacity: 0;
+  transition: opacity 120ms ease;
+  pointer-events: none;
+}
+.corpus-switching.active { opacity: 1; }
+.corpus-switching::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--accent-cool) 35%,
+    var(--accent) 65%,
+    transparent 100%
+  );
+  transform: translateX(-100%);
+  animation: corpus-switching-slide 900ms linear infinite;
+  animation-play-state: paused;
+}
+.corpus-switching.active::before { animation-play-state: running; }
+@keyframes corpus-switching-slide {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(100%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .corpus-switching::before { animation: none; transform: none; }
+}
+
+/* Game-row failed state — set by js/app.js renderRow when a game's bytes
+   have proven corrupt this session. The click handler gates on the same
+   loadFailed flag so these rows silently refuse clicks. */
+.game-table tbody tr[data-state="failed"] {
+  color: var(--warn, #c07a46);
+  cursor: not-allowed;
+}
+.game-table tbody tr[data-state="failed"]:hover {
+  background: inherit;
+}
+.game-table tbody tr[data-state="failed"] td:last-child::after {
+  content: ' ⚠';
+  opacity: 0.85;
+  margin-left: 4px;
+}
+
 /* Inline controls tucked into a panel's title bar (board overlay buttons,
    heatmap channel picker, etc.). Same pattern as `.chart-controls`, just
    scoped so the sibling <h2> and the controls cleanly split the row. */
@@ -505,6 +561,34 @@ button { font-family: inherit; }
   background: var(--accent);
   color: var(--bg-0);
   border-color: var(--accent);
+}
+.hdr-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+  background: var(--bg-1);
+  color: var(--fg-2);
+  border-color: var(--line);
+}
+
+/* Corpus-panel nav cluster: First/Prev/Next/Last buttons for walking
+   through games. Same visual family as the board control-row (chess
+   player tape deck), realized via `.hdr-btn` so the buttons fit into
+   the title bar's size budget. */
+.corpus-nav {
+  display: inline-flex;
+  gap: 4px;
+}
+
+/* Left-side group in the CORPUS panel header: title + nav + loading
+   indicator all huddle next to the <h2>. The game-count meta span
+   lives as a sibling outside this cluster and floats right via the
+   panel-header's space-between. */
+.corpus-title-cluster {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  flex-wrap: wrap;
 }
 
 /* ------------------------------------------------------------------------- *

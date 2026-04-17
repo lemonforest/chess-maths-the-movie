@@ -16,8 +16,12 @@ import { initChart, refreshChart } from './charts.js';
 import { initBoard, refreshBoard, stopAutoplay } from './board.js';
 import { createVirtualTable } from './virtual-table.js';
 
-/** Canonical app version. Bump here, in README, and tag the commit. */
-export const APP_VERSION = 'v0.3.1';
+/** Canonical app version for programmatic consumers (tests, telemetry).
+ *  The visible footer stamp is sourced from #version-tag in index.html so
+ *  a stale-cached app.js can't downgrade the displayed version after a
+ *  fresh HTML load. Keep this, the HTML tag, README, and package.json in
+ *  sync on every release. */
+export const APP_VERSION = 'v0.5.1';
 
 /* ------------------------------------------------------------------ *
  * State store
@@ -325,6 +329,11 @@ function initCorpusTable() {
     renderRow: (g) => {
       const tr = document.createElement('tr');
       tr.dataset.index = g.index;
+      const gameRec = state.corpus?.games?.[g.index];
+      if (gameRec?.loadFailed) {
+        tr.dataset.state = 'failed';
+        tr.title = 'Game data is corrupt — skipped';
+      }
       tr.innerHTML = `
         <td>${g.index}</td>
         <td>${escape(g.white || '—')}</td>
@@ -338,7 +347,11 @@ function initCorpusTable() {
         <td class="num">${formatScalar(g.mean_FT)}</td>
         <td class="event">${escape(g.event || '')}</td>
       `;
-      tr.addEventListener('click', () => selectGame(g.index));
+      tr.addEventListener('click', () => {
+        const rec = state.corpus?.games?.[g.index];
+        if (!rec || rec.loadFailed) return;     // quarantined; click is a no-op
+        selectGame(g.index);
+      });
       return tr;
     },
   });
@@ -349,6 +362,7 @@ function renderCorpusTable() {
   corpusTable.setItems(sortedGames());
   corpusTable.setActive(state.currentGameIndex);
   updateSortIndicators();
+  refreshCorpusNav();
 }
 
 function updateSortIndicators() {
@@ -378,21 +392,40 @@ function sortedGames() {
   return games;
 }
 
+// Monotonic sequence token for selectGame. Each click bumps it; a stale
+// completion whose token no longer matches is dropped so it can't
+// overwrite state.currentGameIndex with a racing earlier click's index.
+// Needed because on the 15k-game lichess broadcast corpus per-game
+// extract latency varies enough that overlapping clicks can resolve
+// out-of-order (see tests-js/smoke-large-corpus.test.js scenario 3b).
+let _selectGameToken = 0;
+
 async function selectGame(index) {
   if (index === state.currentGameIndex) return;
+  // Refuse quarantined games so keyboard / URL / nav-button paths can't
+  // route around the row-click gate and hand garbage to the viewer.
+  const rec = state.corpus?.games?.[index];
+  if (!rec || rec.loadFailed) return;
+  const token = ++_selectGameToken;
   // Stop autoplay synchronously before we swap games. The board panel also
   // stops autoplay in its 'game' subscriber, but that runs after set() emits
   // — racing with any stale timer tick that fires between selectGame and the
   // emit. Calling stopAutoplay first removes the ordering dependency.
   stopAutoplay();
+  setCorpusSwitching(true);
   // Lazy-parse NDJSON + spectral on demand. ensureGameData coalesces
   // concurrent calls on the same index and touches the LRU.
   try {
     await ensureGameData(state.corpus, index);
   } catch (e) {
     console.error('game data load failed:', e);
+    if (token === _selectGameToken) setCorpusSwitching(false);
     return;
   }
+  // If a newer click has bumped the token while we were awaiting, drop
+  // this completion — the later click is already in flight and will run
+  // the state mutation itself. This prevents the last-click-loses race.
+  if (token !== _selectGameToken) return;
   // Repin: active game must never evict even if many others are clicked.
   state.corpus._lru.unpin(state.currentGameIndex);
   state.corpus._lru.pin(index);
@@ -402,7 +435,20 @@ async function selectGame(index) {
   // only — O(visible) rather than O(corpus).
   if (corpusTable) corpusTable.setActive(index);
   renderChainBreadcrumb();
+  setCorpusSwitching(false);
 }
+
+/** Toggle the indeterminate progress indicator in the CORPUS title bar.
+ *  Mirrors, in spirit, the initial corpus-load progress bar — same
+ *  cool→warm gradient — so the user has a consistent visual vocabulary
+ *  for "data is being fetched/parsed". No-op when the element isn't in
+ *  the DOM (e.g. under tests). */
+function setCorpusSwitching(on) {
+  const el = document.getElementById('corpus-switching');
+  if (!el) return;
+  el.classList.toggle('active', !!on);
+}
+
 
 function resultClass(r) {
   if (r === '1-0') return 'result-W';
@@ -677,24 +723,109 @@ function setupTableSorting() {
 }
 
 /* ------------------------------------------------------------------ *
+ * Corpus nav — step / jump through the game list
+ *
+ * Walks games in the table's current sort order (not raw index) so
+ * ◄/► tracks what the user actually sees. Clamped at the ends — no
+ * wrap-around, because a 15k-game corpus with accidental wrap would
+ * be a navigation foot-gun.
+ * ------------------------------------------------------------------ */
+/** Is game index clickable right now? */
+function isGameReady(idx) {
+  const rec = state.corpus?.games?.[idx];
+  return !!(rec && !rec.loadFailed);
+}
+
+function stepGame(delta) {
+  if (!state.corpus) return;
+  const sorted = sortedGames();
+  if (!sorted.length) return;
+  const pos = sorted.findIndex((g) => g.index === state.currentGameIndex);
+  const from = pos >= 0 ? pos : 0;
+  const dir = delta > 0 ? 1 : -1;
+  // Walk past pending/failed siblings so the user always lands on a
+  // clickable game. Stops at the end of the sorted list either way.
+  let to = from;
+  for (let i = 0; i < Math.abs(delta); i++) {
+    let next = to + dir;
+    while (next >= 0 && next < sorted.length && !isGameReady(sorted[next].index)) {
+      next += dir;
+    }
+    if (next < 0 || next >= sorted.length) break;
+    to = next;
+  }
+  if (to === from) return;
+  const target = sorted[to].index;
+  selectGame(target);
+  if (corpusTable) corpusTable.scrollToKey(target);
+}
+
+function jumpGame(where) {
+  if (!state.corpus) return;
+  const sorted = sortedGames();
+  if (!sorted.length) return;
+  const readyList = where === 'first' ? sorted : [...sorted].reverse();
+  const target = readyList.find((g) => isGameReady(g.index))?.index;
+  if (target == null || target === state.currentGameIndex) return;
+  selectGame(target);
+  if (corpusTable) corpusTable.scrollToKey(target);
+}
+
+function refreshCorpusNav() {
+  const host = document.querySelector('.corpus-nav');
+  if (!host) return;
+  const n = state.corpus?.manifest?.games?.length ?? 0;
+  if (n === 0) {
+    host.querySelectorAll('button').forEach((b) => { b.disabled = true; });
+    return;
+  }
+  const sorted = sortedGames();
+  const pos = sorted.findIndex((g) => g.index === state.currentGameIndex);
+  // Buttons disabled when there's no ready sibling in that direction —
+  // prevents dead clicks during phase-B expansion at the head/tail.
+  const hasReadyBefore = sorted.slice(0, Math.max(0, pos)).some((g) => isGameReady(g.index));
+  const hasReadyAfter  = sorted.slice(pos + 1).some((g) => isGameReady(g.index));
+  const setBtn = (action, disabled) => {
+    const b = host.querySelector(`button[data-action="${action}"]`);
+    if (b) b.disabled = disabled;
+  };
+  setBtn('first-game', !hasReadyBefore);
+  setBtn('prev-game',  !hasReadyBefore);
+  setBtn('next-game',  !hasReadyAfter);
+  setBtn('last-game',  !hasReadyAfter);
+}
+
+function setupCorpusNav() {
+  const host = document.querySelector('.corpus-nav');
+  if (!host) return;
+  host.addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-action]');
+    if (!btn || btn.disabled) return;
+    switch (btn.dataset.action) {
+      case 'first-game': jumpGame('first'); break;
+      case 'prev-game':  stepGame(-1);      break;
+      case 'next-game':  stepGame(+1);      break;
+      case 'last-game':  jumpGame('last');  break;
+    }
+  });
+  on('game', refreshCorpusNav);
+  refreshCorpusNav();
+}
+
+/* ------------------------------------------------------------------ *
  * Bootstrap
  * ------------------------------------------------------------------ */
 function init() {
   setupDropZone();
   setupKeyboard();
   setupTableSorting();
+  setupCorpusNav();
   initBoard();
   initHeatmap();
   initChart();
 
   // Initial UI state
   document.body.className = 'state-landing';
-
-  // Stamp the app version into the footer (single source of truth in JS).
-  const versionTag = document.getElementById('version-tag');
-  if (versionTag) {
-    versionTag.textContent = `viewer ${APP_VERSION} · spectralz v2 · 10 channels × 64 modes`;
-  }
 
   // Discover bundled corpora from dataset/index.json and render cards.
   // Fire-and-forget — the drop zone works regardless of whether this

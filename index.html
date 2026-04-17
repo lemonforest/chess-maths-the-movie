@@ -166,7 +166,16 @@
 
       <section id="game-table-panel" class="panel" aria-label="Corpus games">
         <div class="panel-header">
-          <h2>CORPUS</h2>
+          <div class="corpus-title-cluster">
+            <h2>CORPUS</h2>
+            <div class="corpus-nav" role="group" aria-label="Navigate games">
+              <button data-action="first-game" class="hdr-btn" type="button" title="First game (sorted order)">⏮</button>
+              <button data-action="prev-game"  class="hdr-btn" type="button" title="Previous game">◄</button>
+              <button data-action="next-game"  class="hdr-btn" type="button" title="Next game">►</button>
+              <button data-action="last-game"  class="hdr-btn" type="button" title="Last game">⏭</button>
+            </div>
+            <span id="corpus-switching" class="corpus-switching" aria-hidden="true"></span>
+          </div>
           <span id="corpus-meta" class="mono dim">—</span>
         </div>
         <div id="game-table-host" class="table-host">
@@ -200,7 +209,7 @@
 
   <footer id="footer">
     <span>Chess Spectral Lattice Fermion · mlehaptics project · 2026</span>
-    <span class="mono dim" id="version-tag">viewer v0.3.1 · spectralz v2 · 10 channels × 64 modes</span>
+    <span class="mono dim" id="version-tag">viewer v0.5.1 · spectralz v2 · 10 channels × 64 modes</span>
   </footer>
 
   <script type="module" src="./js/app.js"></script>
