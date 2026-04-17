@@ -145,6 +145,7 @@ export async function loadCorpusFromFile(file, onProgress = () => {}) {
     variant,
     sourceName: file.name,
     sourceSize: file.size,
+    _file: file,             // retained so we can recycle the archive worker
     _handle: handle,
     _lru: null,
   };
@@ -207,17 +208,13 @@ export async function ensureGameData(corpus, gameIndex) {
   game._loadPromise = (async () => {
     // NDJSON (per-ply FEN, SAN, eval, clock)
     if (!game.plies && game._ndjsonPath) {
-      const cf = corpus._handle.compressedMap.get(game._ndjsonPath);
-      if (!cf) throw new Error(`ndjson entry missing: ${game._ndjsonPath}`);
-      const ndjsonFile = await cf.extract();
+      const ndjsonFile = await extractByPath(corpus, game._ndjsonPath, 'ndjson');
       const text = await ndjsonFile.text();
       game.plies = parseNdjson(text);
     }
     // Spectralz (decompressed Float32 lattice)
     if (!game.spectral && game._spectralPath) {
-      const cf = corpus._handle.compressedMap.get(game._spectralPath);
-      if (!cf) throw new Error(`spectralz entry missing: ${game._spectralPath}`);
-      const spectralFile = await cf.extract();
+      const spectralFile = await extractByPath(corpus, game._spectralPath, 'spectralz');
       const buf = await spectralFile.arrayBuffer();
       const decompressed = await gunzip(buf);
       const parsed = parseSpectralz(decompressed);
@@ -244,6 +241,66 @@ export async function ensureGameData(corpus, gameIndex) {
 export async function parseGameSpectral(corpus, gameIndex) {
   const g = await ensureGameData(corpus, gameIndex);
   return g.spectral;
+}
+
+/** Pull a single archive entry by path, retrying once through a fresh
+ *  archive worker if libarchive.js's handle has gone stale.
+ *
+ *  After ~25-30 extracts against a large 7z (191 MB broadcast corpus),
+ *  libarchive.js trips its own assertion: "PROGRAMMER ERROR: Function
+ *  archive_read_support_filter_all invoked with invalid archive handle."
+ *  The worker's WASM process aborts. Recycling — close old worker, spawn
+ *  a fresh one from the retained File — fully resets the handle state at
+ *  the cost of one archive re-walk (~200-400 ms).
+ *
+ *  The retry is one-shot. A second failure is propagated so the caller's
+ *  catch (selectGame's try/catch, manifest load, etc.) still surfaces a
+ *  real defect rather than looping forever. */
+async function extractByPath(corpus, path, label) {
+  const cf0 = corpus._handle.compressedMap.get(path);
+  if (!cf0) throw new Error(`${label} entry missing: ${path}`);
+  try {
+    return await cf0.extract();
+  } catch (e) {
+    if (!isStaleArchiveError(e)) throw e;
+    console.warn(`libarchive handle stale on ${label} extract; recycling worker…`);
+    await recycleArchive(corpus);
+    const cf1 = corpus._handle.compressedMap.get(path);
+    if (!cf1) throw new Error(`${label} entry missing after recycle: ${path}`);
+    return await cf1.extract();
+  }
+}
+
+/** Heuristic match on libarchive.js's abort message + the downstream
+ *  Emscripten "Aborted()" RuntimeError. Matching on message text is
+ *  brittle but the library doesn't expose a typed error; restricting
+ *  the retry to these two signatures keeps us from silently papering
+ *  over unrelated failures. */
+function isStaleArchiveError(e) {
+  const msg = String(e && (e.message ?? e) || '');
+  return msg.includes('invalid archive handle')
+      || msg.includes('archive_read_support_filter_all')
+      || msg.includes('Aborted()');
+}
+
+/** Close the archive worker and re-open from the retained File, then
+ *  swap the fresh compressedMap onto corpus._handle in-place. Existing
+ *  CompressedFile references held on game records are only paths (strings);
+ *  the live CompressedFile objects are looked up via the Map per-extract,
+ *  so swapping the Map transparently rebinds them. */
+async function recycleArchive(corpus) {
+  if (!corpus._file) throw new Error('cannot recycle archive: _file not retained');
+  if (corpus._recycling) return corpus._recycling;
+  corpus._recycling = (async () => {
+    try {
+      try { await corpus._handle.archive.close(); } catch (e) { console.warn('recycle close:', e); }
+      const fresh = await openArchive(corpus._file);
+      corpus._handle = fresh;
+    } finally {
+      corpus._recycling = null;
+    }
+  })();
+  return corpus._recycling;
 }
 
 /* ------------------------------------------------------------------ *
