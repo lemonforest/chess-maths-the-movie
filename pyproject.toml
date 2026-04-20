@@ -12,6 +12,8 @@ license = { text = "MIT" }
 
 [project.optional-dependencies]
 dev = ["pytest>=7"]
+# Used by scripts/generate_fiber_norms.py; not needed to run the viewer.
+fiber = ["numpy>=1.26"]
 
 [tool.setuptools]
 packages = ["othello"]
