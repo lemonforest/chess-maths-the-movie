@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Fiber overlay POC · radial test field</title>
+
+  <link rel="stylesheet" href="../lib/chessboard-1.0.0.min.css">
+  <link rel="stylesheet" href="../css/viewer.css">
+
+  <script src="../lib/jquery-3.7.1.min.js"></script>
+  <script src="../lib/chessboard-1.0.0.min.js"></script>
+  <script src="../lib/pieces.js"></script>
+
+  <style>
+    body { padding: 24px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
+    .cell h3 { margin: 0 0 8px; font-family: var(--font-mono); font-size: 12px; letter-spacing: .05em; }
+    .cell .note { font-size: 11px; color: var(--fg-2); margin-top: 6px; font-family: var(--font-mono); }
+    .board-stage {
+      position: relative;
+      width: 360px;
+      height: 360px;
+    }
+    .board-stage .board { width: 360px; }
+    /* Path B: a canvas that sits *under* the piece sprites but *over* the
+       base board squares. chessboard.js renders the board as a table of
+       .square-XXX divs with float: left; the pieces are positioned inside
+       those. We layer a canvas absolutely on top of the whole board and
+       let pointer-events pass through; alpha < 1 makes the underlying
+       squares visible, and chessboard.js's pieces are raised to position: relative
+       so they render on top. */
+    .gradient-layer {
+      position: absolute;
+      pointer-events: none;
+      /* Overlap the board squares exactly — chessboard.js pads its outer
+         container to make room for rank/file labels, so we inset by the
+         observed label band width. A ResizeObserver recomputes this in
+         layoutGradient(). */
+      left: 0; top: 0; width: 100%; height: 100%;
+      z-index: 3;
+    }
+    /* Raise the piece sprites above the gradient overlay. chessboard.js
+       positions them absolutely inside each square; giving .piece-417db
+       a z-index above the gradient layer keeps them legible. */
+    .board-stage .piece-417db { z-index: 4; }
+  </style>
+</head>
+<body class="state-viewer">
+
+  <section class="cell">
+    <h3>PATH A · per-square background-image</h3>
+    <div class="board-stage"><div id="board-a" class="board"></div></div>
+    <p class="note">
+      64 discrete colors, one per square. Same mechanism as the existing
+      channel overlay (js/chess-overlay.js). Honest "value at each square".
+      Pieces render on top via normal CSS stacking — no z-index tweaks needed
+      because background-image is below the piece &lt;img&gt;.
+    </p>
+  </section>
+
+  <section class="cell">
+    <h3>PATH B · smooth canvas overlay</h3>
+    <div class="board-stage">
+      <div id="board-b" class="board"></div>
+      <canvas id="gradient-b" class="gradient-layer"></canvas>
+    </div>
+    <p class="note">
+      Upsampled bilinear canvas laid over the board with CSS absolute
+      positioning; alpha blends with the squares. Pieces raised to
+      z-index 4 so they stay legible. Board flips and resizes re-run
+      layoutGradient().
+    </p>
+  </section>
+
+  <section class="cell">
+    <h3>PATH C · separate SVG overlay</h3>
+    <div class="board-stage">
+      <div id="board-c" class="board"></div>
+      <svg id="svg-c" class="gradient-layer" preserveAspectRatio="none"></svg>
+    </div>
+    <p class="note">
+      Independent SVG document positioned over the board. Same alignment
+      concerns as Path B. Useful if we want SVG filters (e.g. Gaussian
+      blur) rather than raster upsampling. For this POC we draw 64 rects
+      with opacity — a SMIL-free, Tiny-1.2-safe subset — which degenerates
+      into "Path A with extra steps" unless we add &lt;feGaussianBlur&gt;.
+    </p>
+  </section>
+
+  <script type="module">
+    /* Radial test field used in all three panels:
+         f(r, c) = sqrt((r - 3.5)**2 + (c - 3.5)**2)
+       — exactly the formula from the task spec. Row 0 = rank 1, col 0 = file a.
+       Range: 0.707 (center ring) … 4.950 (corners). We invert sign so the
+       *centre* is bright and corners dim, matching the knight-field
+       qualitative structure the real overlay will show. */
+    const FIELD = new Float32Array(64);
+    let fMin = +Infinity, fMax = -Infinity;
+    for (let r = 0; r < 8; r++) {
+      for (let c = 0; c < 8; c++) {
+        const d = Math.sqrt((r - 3.5) ** 2 + (c - 3.5) ** 2);
+        const v = -d;  // centre is large (less negative), corners small (more negative)
+        FIELD[r * 8 + c] = v;
+        if (v < fMin) fMin = v;
+        if (v > fMax) fMax = v;
+      }
+    }
+
+    /* Simple viridis-ish colormap (perceptually monotonic, dark→bright).
+       5 control points; linear interpolation between them on [0, 1]. */
+    const VIRIDIS = [
+      [ 68,   1,  84],
+      [ 59,  82, 139],
+      [ 33, 145, 140],
+      [ 94, 201,  97],
+      [253, 231,  37],
+    ];
+    function cmap(t) {
+      t = Math.max(0, Math.min(1, t));
+      const s = t * (VIRIDIS.length - 1);
+      const i = Math.floor(s);
+      const f = s - i;
+      const a = VIRIDIS[i];
+      const b = VIRIDIS[Math.min(VIRIDIS.length - 1, i + 1)];
+      return [
+        Math.round(a[0] + (b[0] - a[0]) * f),
+        Math.round(a[1] + (b[1] - a[1]) * f),
+        Math.round(a[2] + (b[2] - a[2]) * f),
+      ];
+    }
+    function normT(v) {
+      const span = fMax - fMin;
+      return span > 0 ? (v - fMin) / span : 0.5;
+    }
+
+    /* Path A: per-square background-image tint. */
+    const FILES = ['a','b','c','d','e','f','g','h'];
+    function paintPathA(hostId) {
+      const host = document.getElementById(hostId);
+      if (!host) return false;
+      let touched = 0;
+      for (let i = 0; i < 64; i++) {
+        const sq = FILES[i & 7] + String((i >> 3) + 1);
+        const el = host.querySelector(`[data-square="${sq}"]`);
+        if (!el) continue;
+        const [r, g, b] = cmap(normT(FIELD[i]));
+        // Alpha 0.65 keeps the checker pattern faintly visible — looks
+        // more "overlay" than "repaint". Tweakable.
+        el.style.backgroundImage =
+          `linear-gradient(rgba(${r},${g},${b},0.65), rgba(${r},${g},${b},0.65))`;
+        touched++;
+      }
+      return touched === 64;
+    }
+    function paintPathAWithRetry(hostId) {
+      if (!paintPathA(hostId)) requestAnimationFrame(() => paintPathAWithRetry(hostId));
+    }
+
+    /* Path B: bilinear-upsampled canvas overlay positioned over the board
+       squares. The canvas is sized to exactly match the 8×8 square region
+       (excluding chessboard.js's rank/file notation band around the
+       outside). */
+    function upsample(field, outSize) {
+      // Build a tiny 8x8 RGBA image, then let the canvas 2d scaler do
+      // bilinear interpolation when we drawImage to a larger canvas.
+      const src = document.createElement('canvas');
+      src.width = 8; src.height = 8;
+      const sctx = src.getContext('2d');
+      const img = sctx.createImageData(8, 8);
+      for (let i = 0; i < 64; i++) {
+        // chessboard.js renders rank 8 at the TOP; FIELD is row-major with
+        // row 0 = rank 1 at the BOTTOM. Flip the row when painting so the
+        // smooth gradient lines up with the board squares.
+        const r = i >> 3;
+        const c = i & 7;
+        const [R, G, B] = cmap(normT(field[i]));
+        const dstRow = 7 - r;
+        const o = (dstRow * 8 + c) * 4;
+        img.data[o]     = R;
+        img.data[o + 1] = G;
+        img.data[o + 2] = B;
+        img.data[o + 3] = Math.round(255 * 0.75);
+      }
+      sctx.putImageData(img, 0, 0);
+      const dst = document.createElement('canvas');
+      dst.width = outSize; dst.height = outSize;
+      const dctx = dst.getContext('2d');
+      dctx.imageSmoothingEnabled = true;
+      dctx.imageSmoothingQuality = 'high';
+      dctx.drawImage(src, 0, 0, outSize, outSize);
+      return dst;
+    }
+    function layoutPathB() {
+      const host = document.getElementById('board-b');
+      const cv   = document.getElementById('gradient-b');
+      if (!host || !cv) return;
+      // Use any square's bounding rect to locate the 8x8 region precisely,
+      // accounting for chessboard.js's rank/file label band.
+      const anyA1 = host.querySelector('[data-square="a1"]');
+      const anyH8 = host.querySelector('[data-square="h8"]');
+      if (!anyA1 || !anyH8) { requestAnimationFrame(layoutPathB); return; }
+      const pr = host.getBoundingClientRect();
+      const a1 = anyA1.getBoundingClientRect();
+      const h8 = anyH8.getBoundingClientRect();
+      const left   = Math.min(a1.left, h8.left);
+      const top    = Math.min(a1.top,  h8.top);
+      const right  = Math.max(a1.right, h8.right);
+      const bottom = Math.max(a1.bottom, h8.bottom);
+      cv.style.left   = (left - pr.left) + 'px';
+      cv.style.top    = (top - pr.top) + 'px';
+      cv.style.width  = (right - left) + 'px';
+      cv.style.height = (bottom - top) + 'px';
+      const size = Math.max(64, Math.round((right - left) * (window.devicePixelRatio || 1)));
+      cv.width = size; cv.height = size;
+      const gradCanvas = upsample(FIELD, size);
+      const ctx = cv.getContext('2d');
+      ctx.clearRect(0, 0, size, size);
+      ctx.drawImage(gradCanvas, 0, 0);
+    }
+
+    /* Path C: separate SVG overlay with 64 rects. This is the Tiny-1.2-safe
+       rendering — no filters, no feGaussianBlur. It's essentially Path A
+       expressed in SVG. To get a truly smooth gradient in SVG we would
+       need either feGaussianBlur (full SVG 1.1) or a big mesh of tiny
+       rects. For this POC the discrete rects demonstrate alignment. */
+    function layoutPathC() {
+      const host = document.getElementById('board-c');
+      const svg  = document.getElementById('svg-c');
+      if (!host || !svg) return;
+      const anyA1 = host.querySelector('[data-square="a1"]');
+      const anyH8 = host.querySelector('[data-square="h8"]');
+      if (!anyA1 || !anyH8) { requestAnimationFrame(layoutPathC); return; }
+      const pr = host.getBoundingClientRect();
+      const a1 = anyA1.getBoundingClientRect();
+      const h8 = anyH8.getBoundingClientRect();
+      const left   = Math.min(a1.left, h8.left);
+      const top    = Math.min(a1.top,  h8.top);
+      const right  = Math.max(a1.right, h8.right);
+      const bottom = Math.max(a1.bottom, h8.bottom);
+      svg.style.left   = (left - pr.left) + 'px';
+      svg.style.top    = (top - pr.top) + 'px';
+      svg.style.width  = (right - left) + 'px';
+      svg.style.height = (bottom - top) + 'px';
+      svg.setAttribute('viewBox', '0 0 8 8');
+      while (svg.firstChild) svg.removeChild(svg.firstChild);
+      const NS = 'http://www.w3.org/2000/svg';
+      for (let i = 0; i < 64; i++) {
+        const r = i >> 3, c = i & 7;
+        const y = 7 - r; // rank 8 on top in the board view
+        const [R, G, B] = cmap(normT(FIELD[i]));
+        const rect = document.createElementNS(NS, 'rect');
+        rect.setAttribute('x', c);
+        rect.setAttribute('y', y);
+        rect.setAttribute('width', 1);
+        rect.setAttribute('height', 1);
+        rect.setAttribute('fill', `rgb(${R},${G},${B})`);
+        rect.setAttribute('opacity', '0.65');
+        svg.appendChild(rect);
+      }
+    }
+
+    /* Bootstrap: spin up three chessboard.js instances in the default
+       starting position, then paint the radial field via each path. */
+    const STARTING = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR';
+    const common = {
+      position: STARTING,
+      pieceTheme: window.__inlineChessPieceTheme,
+      showNotation: true,
+    };
+    window.Chessboard('board-a', common);
+    window.Chessboard('board-b', common);
+    window.Chessboard('board-c', common);
+
+    // Wait for the squares to be in the DOM before painting.
+    requestAnimationFrame(() => {
+      paintPathAWithRetry('board-a');
+      layoutPathB();
+      layoutPathC();
+    });
+
+    window.addEventListener('resize', () => {
+      layoutPathB();
+      layoutPathC();
+    });
+
+    // Expose for console inspection / browser automation.
+    window.__fiberPoc = { FIELD, cmap, normT, layoutPathB, layoutPathC };
+  </script>
+</body>
+</html>
