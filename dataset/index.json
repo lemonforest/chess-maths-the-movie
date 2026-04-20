@@ -1,16 +1,7 @@
 {
   "generated_at": "2026-04-16T03:16:28.765Z",
-  "count": 3,
+  "count": 2,
   "corpora": [
-    {
-      "file": "lichess_broadcast_2022-11.7z",
-      "size": 200523780,
-      "size_human": "191 MB",
-      "mtime": "2026-04-15T21:35:09.607Z",
-      "title": "lichess broadcast 2022-11",
-      "subtitle": "",
-      "tags": []
-    },
     {
       "file": "single_lichess_pgn_2026.04.15_lichess_AI_level_1_vs_lemonforest.eo9BSVgI.7z",
       "size": 76034,
