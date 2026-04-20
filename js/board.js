@@ -19,7 +19,15 @@
 import { state, on as subscribe, set as setState, getActiveGame } from './app.js';
 import { createOthelloDriver } from './othello-board.js';
 import { attachChessOverlay } from './chess-overlay.js';
+import { attachFiberOverlay, loadFiberNorms } from './fiber-overlay.js';
 import { getOverlayForPly, OVERLAY_TRANSFORM_IDS } from './spectral.js';
+
+const FIBER_PIECE_IDS = ['N', 'B', 'R', 'Q', 'K'];
+const FIBER_MODE_IDS  = ['gradient', 'discrete'];
+const FIBER_CMAP_IDS  = ['viridis', 'diverging'];
+const ROOK_HELPER = 'Rook fiber is identically zero — its rule content ' +
+                    'lives in the diagonal channel, not the off-diagonal ' +
+                    'fiber. See notebook §7b.';
 
 const STARTING_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
@@ -31,6 +39,12 @@ const board = {
   autoplayTimer: null,
   speeds: [250, 500, 1000, 2000],
 };
+
+// Static rank-3 fiber-norm data, lazily loaded on initBoard. Lives at
+// module scope so driver re-installs (e.g. variant swap) can re-hand
+// the data to the freshly-attached fiber-overlay instance without
+// repeating the fetch.
+let fiberData = null;
 
 export function initBoard(rootIds = {
   board: 'board',
@@ -68,6 +82,43 @@ export function initBoard(rootIds = {
       }
     });
   }
+
+  // Fiber-overlay controls live in a second row below the panel header;
+  // they delegate to app state so the URL hash / restore path stays
+  // consistent with the other toggles.
+  const fiberHost = document.getElementById('fiber-controls');
+  if (fiberHost) {
+    fiberHost.addEventListener('click', (evt) => {
+      const pBtn = evt.target.closest('button[data-fiber-piece]');
+      if (pBtn && FIBER_PIECE_IDS.includes(pBtn.dataset.fiberPiece)) {
+        setState({ fiberPiece: pBtn.dataset.fiberPiece });
+        return;
+      }
+      const mBtn = evt.target.closest('button[data-fiber-mode]');
+      if (mBtn && FIBER_MODE_IDS.includes(mBtn.dataset.fiberMode)) {
+        setState({ fiberMode: mBtn.dataset.fiberMode });
+        return;
+      }
+      const cBtn = evt.target.closest('button[data-fiber-cmap]');
+      if (cBtn && FIBER_CMAP_IDS.includes(cBtn.dataset.fiberCmap)) {
+        setState({ fiberCmap: cBtn.dataset.fiberCmap });
+      }
+    });
+  }
+
+  // Fetch the static fiber-norms data once. Small enough (~5 KB) that a
+  // plain fetch-on-init suffices; the viewer works without it (the
+  // fiber button becomes a no-op with a console warning).
+  loadFiberNorms().then((data) => {
+    fiberData = data;
+    if (board.driver && typeof board.driver.fiber === 'function') {
+      const f = board.driver.fiber();
+      if (f) f.setData(data);
+    }
+    // If the user already toggled fiber on before the fetch resolved,
+    // re-sync so the overlay actually renders.
+    syncFiberOverlay();
+  }).catch((e) => console.warn('fiber overlay: data load failed', e));
 
   // Resize: the chess driver needs an explicit resize call; the othello
   // driver scales with its container via SVG viewBox and no-ops here.
@@ -107,6 +158,19 @@ export function initBoard(rootIds = {
       btn.setAttribute('aria-pressed', active ? 'true' : 'false');
     });
   });
+  subscribe('fiberOverlay', () => {
+    syncFiberOverlay();
+    const btn = document.querySelector('button[data-action="fiber"]');
+    if (btn) {
+      btn.setAttribute('aria-pressed', state.fiberOverlay ? 'true' : 'false');
+      btn.classList.toggle('active', state.fiberOverlay);
+    }
+    const panel = document.getElementById('fiber-controls');
+    if (panel) panel.hidden = !state.fiberOverlay;
+  });
+  subscribe('fiberPiece', () => { syncFiberOverlay(); syncFiberControlHighlights(); });
+  subscribe('fiberMode',  () => { syncFiberOverlay(); syncFiberControlHighlights(); });
+  subscribe('fiberCmap',  () => { syncFiberOverlay(); syncFiberControlHighlights(); });
   subscribe('plainBoard', () => {
     const host = document.getElementById(board.hostId);
     if (host) host.classList.toggle('plain-board', state.plainBoard);
@@ -155,6 +219,7 @@ function _createChessDriver(hostId) {
   // the othello driver.
   let cb = null;
   let overlay = null;
+  let fiber = null;
   return {
     init(id = hostId) {
       cb = window.Chessboard(id, {
@@ -167,22 +232,35 @@ function _createChessDriver(hostId) {
         appearSpeed: 100,
       });
       overlay = attachChessOverlay(id);
+      fiber = attachFiberOverlay(id);
     },
     setPosition(ply) {
       if (!cb) return;
       const fen = (ply && typeof ply.fen === 'string') ? ply.fen : STARTING_FEN;
       // Animate transitions (same behavior as before).
       cb.position(fen, true);
+      // The fiber gradient canvas is anchored by a1/h8 bounding rects —
+      // reposition after the piece DOM settles on each ply, since
+      // chessboard.js rebuilds the square cells on position changes
+      // larger than the simple animation path.
+      if (fiber) requestAnimationFrame(() => fiber.relayout());
     },
-    resize() { if (cb) cb.resize(); },
+    resize() {
+      if (cb) cb.resize();
+      if (fiber) fiber.relayout();
+    },
     flip()   {
       if (cb) cb.flip();
       if (overlay) overlay.setFlipped(board.flipped);
+      if (fiber)   fiber.setFlipped(board.flipped);
     },
     setOverlay(data) { if (overlay) overlay.setOverlay(data); },
+    fiber() { return fiber; },
     destroy() {
       if (overlay) { try { overlay.destroy(); } catch (e) { /* best-effort */ } }
       overlay = null;
+      if (fiber)   { try { fiber.destroy();   } catch (e) { /* best-effort */ } }
+      fiber = null;
       if (cb && typeof cb.destroy === 'function') {
         try { cb.destroy(); } catch (e) { /* chessboard.js destroy is best-effort */ }
       }
@@ -219,7 +297,21 @@ function handleAction(action) {
       board.flipped = !board.flipped;
       if (board.driver) board.driver.flip();
       break;
-    case 'overlay': setState({ boardOverlay: !state.boardOverlay }); break;
+    case 'overlay':
+      // Mutually exclusive with the fiber overlay — both paint the same
+      // board squares, and running them simultaneously would stack two
+      // tints with no coherent interpretation.
+      setState({
+        boardOverlay: !state.boardOverlay,
+        fiberOverlay: state.boardOverlay ? state.fiberOverlay : false,
+      });
+      break;
+    case 'fiber':
+      setState({
+        fiberOverlay: !state.fiberOverlay,
+        boardOverlay: state.fiberOverlay ? state.boardOverlay : false,
+      });
+      break;
     case 'plain':   setState({ plainBoard: !state.plainBoard });     break;
   }
 }
@@ -287,6 +379,48 @@ function syncOverlay() {
   // state is preserved so returning to a single-channel view re-shows it.
   const data = getOverlayForPly(game, state.currentPly, state.heatmapView, state.overlayTransform);
   board.driver.setOverlay(data);
+}
+
+function syncFiberOverlay() {
+  if (!board.driver || typeof board.driver.fiber !== 'function') return;
+  const f = board.driver.fiber();
+  if (!f) return;
+  // Hand the cached data over whenever the fetch eventually resolves;
+  // the overlay no-ops internally if setData hasn't been called yet.
+  if (fiberData) f.setData(fiberData);
+  f.setPiece(state.fiberPiece);
+  f.setMode(state.fiberMode);
+  f.setColormap(state.fiberCmap);
+  f.setFlipped(board.flipped);
+  f.setEnabled(state.fiberOverlay && !!fiberData);
+
+  // Helper text near the piece selector: tell the user *why* the rook
+  // is flat rather than letting them wonder if it's broken.
+  const helper = document.getElementById('fiber-helper');
+  if (helper) {
+    if (state.fiberOverlay && state.fiberPiece === 'R') {
+      helper.textContent = ROOK_HELPER;
+      helper.hidden = false;
+    } else {
+      helper.hidden = true;
+      helper.textContent = '';
+    }
+  }
+}
+
+function syncFiberControlHighlights() {
+  const panel = document.getElementById('fiber-controls');
+  if (!panel) return;
+  const mark = (attr, current) => {
+    panel.querySelectorAll(`[${attr}]`).forEach((btn) => {
+      const active = btn.getAttribute(attr) === current;
+      btn.classList.toggle('active', active);
+      btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+  };
+  mark('data-fiber-piece', state.fiberPiece);
+  mark('data-fiber-mode',  state.fiberMode);
+  mark('data-fiber-cmap',  state.fiberCmap);
 }
 
 function syncBoardToPly() {

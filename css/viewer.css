@@ -602,6 +602,34 @@ button { font-family: inherit; }
 }
 #board { width: 400px; max-width: 100%; }
 
+/* Fiber-norm overlay: when the canvas gradient is on, raise
+   chessboard.js's piece sprites above it so they stay legible.
+   The .piece-417db class is chessboard.js 1.0's piece <img> hook. */
+#board.fiber-gradient-on .piece-417db { position: relative; z-index: 4; }
+.fiber-gradient-canvas {
+  /* All positioning set inline by fiber-overlay.js; this block exists so
+     the canvas picks up the host's color-scheme without accidentally
+     receiving pointer-events. */
+  pointer-events: none;
+}
+
+.fiber-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 6px 14px 10px;
+  background: var(--bg-1);
+  border-top: 1px solid var(--line);
+}
+.fiber-controls[hidden] { display: none; }
+.fiber-helper {
+  font-size: 10.5px;
+  color: var(--fg-2);
+  flex: 1;
+  min-width: 180px;
+}
+
 /* chessboard.js dark theme tweaks */
 .white-1e1d7 { background-color: #2a2a3e !important; color: #1a1a2e !important; }
 .black-3c85d { background-color: #1a1a2e !important; color: #2a2a3e !important; }
