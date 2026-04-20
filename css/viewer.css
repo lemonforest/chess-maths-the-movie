@@ -625,7 +625,19 @@ button { font-family: inherit; }
   background: var(--bg-1);
   border-top: 1px solid var(--line);
 }
-.fiber-controls[hidden] { display: none; }
+/* When the fiber overlay toggle is off we want the sub-row to DISAPPEAR
+   visually but still reserve its vertical space — otherwise toggling
+   ∥F∥ on/off makes the chessboard jump up and down by the row's
+   height, which is distracting in general and actively hostile to
+   aphantasic readers (working memory for "where was the board?" has
+   to be rebuilt every toggle). `display: flex` + `visibility: hidden`
+   keeps the exact layout footprint; `pointer-events: none` stops the
+   invisible buttons from being clickable. */
+.fiber-controls[hidden] {
+  display: flex;
+  visibility: hidden;
+  pointer-events: none;
+}
 .fiber-controls .seg-control { align-self: center; }
 .fiber-helper {
   font-size: 10.5px;
