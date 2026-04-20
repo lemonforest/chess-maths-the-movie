@@ -86,6 +86,60 @@ replacement.
 - **King (K):** localized pattern reflecting the king's
   8-neighbourhood rule.
 
+### What is the field actually showing?
+
+The overlay is **a static property of each piece's move rules on an
+8×8 board** — it does not depend on the current position, the
+occupied squares, or the ply. If you toggle between ply 2 and ply 3
+with `N` selected, the overlay looks identical, and that's correct.
+Stepping through moves changes *where the knights are*; it does not
+change *how a knight moves from any given square*, and this overlay
+visualizes the latter.
+
+The most intuitive way to read it: at each square, the field
+measures how much "rule content" that piece carries if you placed
+it there, measured specifically through the shared rank-3 fiber
+(cross-mode coupling) of the board Laplacian. Translated into chess
+terms:
+
+- **Knight.** Has 2 legal targets from `a1` (→ `b3, c2`), 3 from
+  `a2`, 4 from `a3`/`c1`, 6 from `b3`, and 8 from `d4`/`d5`/`e4`/`e5`.
+  The overlay shines brightest on the central 4×4 because those
+  squares maximise knight connectivity; corners are dim because they
+  minimise it. This is the canonical §7 example — the
+  "2:1 corner/center" shape the notebook anchors on.
+- **Bishop.** Every bishop sees at most two diagonals from any
+  square. On the central `d4`/`d5`/`e4`/`e5` squares those diagonals
+  are 13 squares long (7 + 7 + 7 + 7 intersected); on the corners
+  they cover only 7 squares (one long diagonal). So the field
+  brightens towards the centre along the diagonal axes.
+- **Rook.** Every rook sees exactly 14 squares (7 along its rank +
+  7 along its file) from *anywhere* on the board — dimension-
+  invariant. That uniformity means all of the rook's "rule content"
+  lives in the diagonal (D₄-symmetric) spectral channel, and none
+  in the off-diagonal fiber. Hence the overlay is flat zero and the
+  helper line points at §7b for the proof.
+- **Queen.** The queen's moves are the union of rook + bishop, but
+  the rook piece is fiber-invisible (see above), so only the bishop
+  part of the queen's rule set shows up in the fiber. Numerically
+  this means the bishop and queen fields are parallel as 64-vectors
+  (cosine = 1.000), just at a different overall scale — the
+  viewer's per-piece range normalisation maps both to the full
+  colour ramp so the *shape* is visible even though the absolute
+  brightness differs.
+- **King.** A king has 3 legal targets in the corner, 5 along an
+  edge, and 8 in the interior. That gives a much gentler
+  corner→centre gradient than the knight (3:8 vs. 2:8) and also
+  fewer long-range couplings, so the king field is both smaller in
+  range and more localised than the knight's.
+
+The easy first sanity check from a chess perspective: count the
+legal moves of the selected piece from a corner square vs. a
+central square in your head (or on paper). If the overlay is darker
+where you counted fewer moves and brighter where you counted more —
+for `N`, `B`, `Q`, `K` — it's working. `R` is the principled
+exception.
+
 The sub-controls that appear when the overlay is on:
 
 | Control | Options | Effect |
