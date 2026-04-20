@@ -282,6 +282,38 @@ function _createChessLikeOthello(hostId) {
  * ------------------------------------------------------------------ */
 
 function handleAction(action) {
+  // Non-game-dependent actions run first so the overlay / fiber / plain
+  // toggles work even before a corpus is loaded (and during the brief
+  // window while the first game's NDJSON + spectralz are being parsed).
+  // The fiber overlay in particular is *static* — it doesn't need any
+  // ply data — so gating it on game presence was silently swallowing
+  // every click until a game finished loading.
+  switch (action) {
+    case 'overlay':
+      // Mutually exclusive with the fiber overlay — both paint the same
+      // board squares, and running them simultaneously would stack two
+      // tints with no coherent interpretation.
+      setState({
+        boardOverlay: !state.boardOverlay,
+        fiberOverlay: state.boardOverlay ? state.fiberOverlay : false,
+      });
+      return;
+    case 'fiber':
+      setState({
+        fiberOverlay: !state.fiberOverlay,
+        boardOverlay: state.fiberOverlay ? state.boardOverlay : false,
+      });
+      return;
+    case 'plain':
+      setState({ plainBoard: !state.plainBoard });
+      return;
+    case 'flip':
+      board.flipped = !board.flipped;
+      if (board.driver) board.driver.flip();
+      return;
+  }
+
+  // Game-dependent actions — need a loaded game with at least one ply.
   const game = getActiveGame();
   if (!game) return;
   const n = game.spectral?.nPlies ?? game.plies?.length ?? 0;
@@ -293,26 +325,6 @@ function handleAction(action) {
     case 'last':  setState({ currentPly: n - 1 }); break;
     case 'play':  toggleAutoplay(); break;
     case 'speed': cycleSpeed(); break;
-    case 'flip':
-      board.flipped = !board.flipped;
-      if (board.driver) board.driver.flip();
-      break;
-    case 'overlay':
-      // Mutually exclusive with the fiber overlay — both paint the same
-      // board squares, and running them simultaneously would stack two
-      // tints with no coherent interpretation.
-      setState({
-        boardOverlay: !state.boardOverlay,
-        fiberOverlay: state.boardOverlay ? state.fiberOverlay : false,
-      });
-      break;
-    case 'fiber':
-      setState({
-        fiberOverlay: !state.fiberOverlay,
-        boardOverlay: state.fiberOverlay ? state.boardOverlay : false,
-      });
-      break;
-    case 'plain':   setState({ plainBoard: !state.plainBoard });     break;
   }
 }
 

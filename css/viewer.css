@@ -533,21 +533,24 @@ button { font-family: inherit; }
 .header-controls {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
   flex-wrap: wrap;
   min-width: 0;
 }
 
-/* Small-icon buttons for panel-header controls — matches the control-row
-   button look without depending on that wrapper's padding/border. */
+/* Small-icon buttons for panel-header controls. Spec'd to match the
+   tight metrics of `.chan-btn` (heatmap channel row) so the board
+   panel's header visually rhymes with the heatmap panel's header —
+   both surfaces read as the same button family at a glance. */
 .hdr-btn {
-  background: var(--bg-1);
+  background: transparent;
   color: var(--fg-1);
-  border: 1px solid var(--line);
-  padding: 4px 9px;
+  border: 1px solid var(--line-strong);
+  padding: 4px 8px;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1;
+  letter-spacing: 0.04em;
   cursor: pointer;
   transition: background 100ms, color 100ms, border-color 100ms;
 }
@@ -616,13 +619,14 @@ button { font-family: inherit; }
 .fiber-controls {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
   flex-wrap: wrap;
   padding: 6px 14px 10px;
   background: var(--bg-1);
   border-top: 1px solid var(--line);
 }
 .fiber-controls[hidden] { display: none; }
+.fiber-controls .seg-control { align-self: center; }
 .fiber-helper {
   font-size: 10.5px;
   color: var(--fg-2);
