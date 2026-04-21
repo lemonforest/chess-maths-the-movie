@@ -533,21 +533,24 @@ button { font-family: inherit; }
 .header-controls {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
   flex-wrap: wrap;
   min-width: 0;
 }
 
-/* Small-icon buttons for panel-header controls — matches the control-row
-   button look without depending on that wrapper's padding/border. */
+/* Small-icon buttons for panel-header controls. Spec'd to match the
+   tight metrics of `.chan-btn` (heatmap channel row) so the board
+   panel's header visually rhymes with the heatmap panel's header —
+   both surfaces read as the same button family at a glance. */
 .hdr-btn {
-  background: var(--bg-1);
+  background: transparent;
   color: var(--fg-1);
-  border: 1px solid var(--line);
-  padding: 4px 9px;
+  border: 1px solid var(--line-strong);
+  padding: 4px 8px;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1;
+  letter-spacing: 0.04em;
   cursor: pointer;
   transition: background 100ms, color 100ms, border-color 100ms;
 }
@@ -601,6 +604,74 @@ button { font-family: inherit; }
   flex: 0 0 auto;
 }
 #board { width: 400px; max-width: 100%; }
+
+/* Fiber-norm overlay: when the canvas gradient is on, raise
+   chessboard.js's piece sprites above it so they stay legible.
+   The .piece-417db class is chessboard.js 1.0's piece <img> hook. */
+#board.fiber-gradient-on .piece-417db { position: relative; z-index: 4; }
+.fiber-gradient-canvas {
+  /* All positioning set inline by fiber-overlay.js; this block exists so
+     the canvas picks up the host's color-scheme without accidentally
+     receiving pointer-events. */
+  pointer-events: none;
+}
+
+.fiber-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 6px 14px 10px;
+  background: var(--bg-1);
+  border-top: 1px solid var(--line);
+  /* Anchor for the absolutely-positioned .fiber-helper tooltip below. */
+  position: relative;
+}
+/* When the fiber overlay toggle is off we want the sub-row to DISAPPEAR
+   visually but still reserve its vertical space — otherwise toggling
+   ∥F∥ on/off makes the chessboard jump up and down by the row's
+   height, which is distracting in general and actively hostile to
+   aphantasic readers (working memory for "where was the board?" has
+   to be rebuilt every toggle). `display: flex` + `visibility: hidden`
+   keeps the exact layout footprint; `pointer-events: none` stops the
+   invisible buttons from being clickable. */
+.fiber-controls[hidden] {
+  display: flex;
+  visibility: hidden;
+  pointer-events: none;
+}
+.fiber-controls .seg-control { align-self: center; }
+/* Rook-helper note: floats as a tooltip overlay anchored to the bottom-
+   left of the fiber-controls row rather than sitting inline. Inline
+   placement with `flex: 1; min-width: 180px` made the row wrap (its
+   185-char message doesn't fit beside the three seg-controls), which
+   grew the row's height and booped the whole chessboard down by ~24px
+   every time the user picked R. Absolute positioning keeps the row at
+   its normal one-line height and lets the note hover over the top
+   edge of the board without affecting layout. */
+.fiber-helper {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  top: 100%;
+  z-index: 20;
+  margin-top: -2px;
+  padding: 4px 8px;
+  font-size: 10.5px;
+  line-height: 1.35;
+  color: var(--fg-2);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  pointer-events: none;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+  /* Auto-fade behaviour: the note flashes in when rook is first
+     picked (or re-appears on R hover), then fades out once the
+     mouse leaves R so the board isn't permanently half-covered. */
+  opacity: 0;
+  transition: opacity 180ms ease-out;
+}
+.fiber-helper.is-visible { opacity: 1; }
 
 /* chessboard.js dark theme tweaks */
 .white-1e1d7 { background-color: #2a2a3e !important; color: #1a1a2e !important; }
@@ -941,6 +1012,16 @@ button { font-family: inherit; }
   color: var(--fg-3);
   background: var(--bg-1);
   border-top: 1px solid var(--line);
+}
+#footer .footer-link {
+  color: var(--fg-2);
+  text-decoration: none;
+  border-bottom: 1px dotted var(--line);
+  transition: color 120ms, border-color 120ms;
+}
+#footer .footer-link:hover {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
 }
 
 /* ------------------------------------------------------------------------- *

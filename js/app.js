@@ -21,7 +21,7 @@ import { createVirtualTable } from './virtual-table.js';
  *  a stale-cached app.js can't downgrade the displayed version after a
  *  fresh HTML load. Keep this, the HTML tag, README, and package.json in
  *  sync on every release. */
-export const APP_VERSION = 'v0.5.1';
+export const APP_VERSION = 'v0.8.1';
 
 /* ------------------------------------------------------------------ *
  * State store
@@ -37,6 +37,18 @@ export const state = {
   boardOverlay: false,       // project the current heatmap channel onto the board
   overlayTransform: 'abs',   // 'abs' | 'delta' | 'log' | 'z' — perceptual mode for the overlay
   plainBoard: false,         // flatten the checker pattern so overlay tints read cleanly
+
+  // Fiber-norm overlay: a static (non-ply-dependent) rank-3 fiber field
+  // painted onto the 8x8 surface. Mutually exclusive with boardOverlay
+  // at the rendering level (they share the board squares); both state
+  // flags live here so the UI buttons can track pressed state
+  // independently.
+  fiberOverlay: false,       // show the fiber-norm overlay?
+  fiberPiece:   'N',         // 'P' | 'N' | 'B' | 'R' | 'Q' | 'K'
+  fiberMode:    'gradient',  // 'gradient' | 'discrete'
+  fiberCmap:    'viridis',   // 'viridis' | 'diverging' | 'mono'
+  fiberFollow:  false,       // auto-switch fiberPiece to the piece that
+                             // just moved on each ply change?
 
   chartScale: 'z',
   pendingHash: null,        // { game, ply } from URL when corpus not loaded yet
@@ -115,6 +127,11 @@ function syncHash() {
   if (state.overlayTransform && state.overlayTransform !== 'abs') {
     params.set('tx', state.overlayTransform);
   }
+  if (state.fiberOverlay) {
+    const parts = [state.fiberPiece, state.fiberMode, state.fiberCmap];
+    if (state.fiberFollow) parts.push('follow');
+    params.set('fiber', parts.join(','));
+  }
   history.replaceState(null, '', '#' + params.toString());
 }
 
@@ -129,6 +146,7 @@ function readHash() {
     channels: params.get('ch')   ? params.get('ch').split(',').filter(Boolean) : null,
     scale:    params.get('scale') || null,
     transform: params.get('tx') || null,
+    fiber:    params.get('fiber') || null,
   };
 }
 
@@ -264,6 +282,14 @@ async function startLoad(file) {
     if (hash?.channels) state.activeChannels = new Set(hash.channels);
     if (hash?.scale)    state.chartScale = hash.scale;
     if (hash?.transform) state.overlayTransform = hash.transform;
+    if (hash?.fiber) {
+      const [p, m, c, follow] = hash.fiber.split(',');
+      if (['P','N','B','R','Q','K'].includes(p))              state.fiberPiece = p;
+      if (['gradient','discrete'].includes(m))                 state.fiberMode  = m;
+      if (['viridis','diverging','mono'].includes(c))          state.fiberCmap  = c;
+      if (follow === 'follow')                                  state.fiberFollow = true;
+      state.fiberOverlay = true;
+    }
 
     // If selected game wasn't pre-parsed (only game[0] is eager), parse now.
     // This guarantees plies + spectral are populated before the viewer reveals.
@@ -296,6 +322,14 @@ async function startLoad(file) {
     emit('chartScale');
     emit('evalOverlay');
     emit('overlayTransform');
+    // Kick the fiber-overlay subscribers once so initial control
+    // highlights and helper text land in the right state without
+    // waiting for the user to click.
+    emit('fiberPiece');
+    emit('fiberMode');
+    emit('fiberCmap');
+    emit('fiberOverlay');
+    emit('fiberFollow');
     emit('ply');
     syncHash();
   } catch (err) {

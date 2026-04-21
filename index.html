@@ -87,6 +87,9 @@
           <div class="header-controls">
             <button data-action="overlay" class="hdr-btn" type="button"
                     title="Toggle channel overlay on board" aria-pressed="false">⊞</button>
+            <button data-action="fiber" class="hdr-btn" type="button"
+                    title="Toggle fiber-norm overlay (static, per piece type)"
+                    aria-pressed="false">∥F∥</button>
             <button data-action="plain" class="hdr-btn" type="button"
                     title="Flatten checker pattern (cleaner overlay)" aria-pressed="false">◻</button>
             <div class="seg-control" role="group" aria-label="Overlay transform">
@@ -106,6 +109,33 @@
             <span id="board-ply-readout" class="mono dim">ply 0/0</span>
           </div>
         </div>
+        <div id="fiber-controls" class="fiber-controls" hidden
+             aria-label="Fiber overlay controls">
+          <div class="seg-control" role="group" aria-label="Piece">
+            <button data-fiber-piece="P" class="seg-btn" type="button"
+                    title="Pawn (direction-collapsed, Z2×Z2 symmetry only)">P</button>
+            <button data-fiber-piece="N" class="seg-btn" type="button" title="Knight">N</button>
+            <button data-fiber-piece="B" class="seg-btn" type="button" title="Bishop">B</button>
+            <button data-fiber-piece="R" class="seg-btn" type="button" title="Rook">R</button>
+            <button data-fiber-piece="Q" class="seg-btn" type="button" title="Queen">Q</button>
+            <button data-fiber-piece="K" class="seg-btn" type="button" title="King">K</button>
+          </div>
+          <div class="seg-control" role="group" aria-label="Render mode">
+            <button data-fiber-mode="gradient" class="seg-btn" type="button"
+                    title="Smooth bilinear-upsampled gradient">smooth</button>
+            <button data-fiber-mode="discrete" class="seg-btn" type="button"
+                    title="Discrete per-square tiles (honest data view)">tiles</button>
+          </div>
+          <div class="seg-control" role="group" aria-label="Colormap">
+            <button data-fiber-cmap="viridis" class="seg-btn" type="button"
+                    title="Perceptually uniform (viridis)">viridis</button>
+            <button data-fiber-cmap="diverging" class="seg-btn" type="button"
+                    title="Divergent, centered on the mean">div</button>
+            <button data-fiber-cmap="mono" class="seg-btn" type="button"
+                    title="Greyscale elevation — stays out of channel's hue zone when both overlays are on">mono</button>
+          </div>
+          <span id="fiber-helper" class="fiber-helper mono dim" hidden></span>
+        </div>
         <div id="board" class="board-host"></div>
         <div id="board-controls" class="control-row">
           <button data-action="first" title="First ply (Home)" type="button">⏮</button>
@@ -115,6 +145,9 @@
           <button data-action="last"  title="Last ply (End)" type="button">⏭</button>
           <button data-action="speed" id="speed-btn" type="button" title="Autoplay speed">500ms</button>
           <button data-action="flip"  title="Flip board" type="button">⇅</button>
+          <button data-action="follow" id="fiber-follow-btn" type="button"
+                  aria-pressed="false" hidden
+                  title="Follow moves: auto-switch the fiber piece to match whoever just moved">⇝</button>
         </div>
         <dl id="board-info" class="info-grid mono">
           <dt>Move</dt>      <dd id="info-move">—</dd>
@@ -208,8 +241,8 @@
   </div>
 
   <footer id="footer">
-    <span>Chess Spectral Lattice Fermion · mlehaptics project · 2026</span>
-    <span class="mono dim" id="version-tag">viewer v0.5.1 · spectralz v2 · 10 channels × 64 modes</span>
+    <span>Chess Spectral Lattice Fermion · mlehaptics project · <a href="https://github.com/lemonforest/chess-maths-the-movie/" class="footer-link" target="_blank" rel="noopener">GitHub</a> · 2026</span>
+    <span class="mono dim" id="version-tag">viewer v0.8.1 · spectralz v2 · 10 channels × 64 modes</span>
   </footer>
 
   <script type="module" src="./js/app.js"></script>

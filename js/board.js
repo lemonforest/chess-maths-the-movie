@@ -19,7 +19,15 @@
 import { state, on as subscribe, set as setState, getActiveGame } from './app.js';
 import { createOthelloDriver } from './othello-board.js';
 import { attachChessOverlay } from './chess-overlay.js';
+import { attachFiberOverlay, loadFiberNorms } from './fiber-overlay.js';
 import { getOverlayForPly, OVERLAY_TRANSFORM_IDS } from './spectral.js';
+
+const FIBER_PIECE_IDS = ['P', 'N', 'B', 'R', 'Q', 'K'];
+const FIBER_MODE_IDS  = ['gradient', 'discrete'];
+const FIBER_CMAP_IDS  = ['viridis', 'diverging', 'mono'];
+const ROOK_HELPER = 'Rook fiber is identically zero — its rule content ' +
+                    'lives in the diagonal channel, not the off-diagonal ' +
+                    'fiber. See notebook §7b.';
 
 const STARTING_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
@@ -31,6 +39,12 @@ const board = {
   autoplayTimer: null,
   speeds: [250, 500, 1000, 2000],
 };
+
+// Static rank-3 fiber-norm data, lazily loaded on initBoard. Lives at
+// module scope so driver re-installs (e.g. variant swap) can re-hand
+// the data to the freshly-attached fiber-overlay instance without
+// repeating the fetch.
+let fiberData = null;
 
 export function initBoard(rootIds = {
   board: 'board',
@@ -69,6 +83,54 @@ export function initBoard(rootIds = {
     });
   }
 
+  // Fiber-overlay controls live in a second row below the panel header;
+  // they delegate to app state so the URL hash / restore path stays
+  // consistent with the other toggles.
+  const fiberHost = document.getElementById('fiber-controls');
+  if (fiberHost) {
+    fiberHost.addEventListener('click', (evt) => {
+      const pBtn = evt.target.closest('button[data-fiber-piece]');
+      if (pBtn && FIBER_PIECE_IDS.includes(pBtn.dataset.fiberPiece)) {
+        setState({ fiberPiece: pBtn.dataset.fiberPiece });
+        return;
+      }
+      const mBtn = evt.target.closest('button[data-fiber-mode]');
+      if (mBtn && FIBER_MODE_IDS.includes(mBtn.dataset.fiberMode)) {
+        const next = mBtn.dataset.fiberMode;
+        const patch = { fiberMode: next };
+        // Discrete fiber + channel overlay fight for the same
+        // background-image property. Switching INTO discrete while
+        // channel is on → turn channel off so each overlay has a
+        // well-defined layer. (The symmetric "channel turning on while
+        // fiber is discrete" case is handled in handleAction.)
+        if (next === 'discrete' && state.boardOverlay) {
+          patch.boardOverlay = false;
+        }
+        setState(patch);
+        return;
+      }
+      const cBtn = evt.target.closest('button[data-fiber-cmap]');
+      if (cBtn && FIBER_CMAP_IDS.includes(cBtn.dataset.fiberCmap)) {
+        setState({ fiberCmap: cBtn.dataset.fiberCmap });
+      }
+    });
+    bindRookHelperHover();
+  }
+
+  // Fetch the static fiber-norms data once. Small enough (~5 KB) that a
+  // plain fetch-on-init suffices; the viewer works without it (the
+  // fiber button becomes a no-op with a console warning).
+  loadFiberNorms().then((data) => {
+    fiberData = data;
+    if (board.driver && typeof board.driver.fiber === 'function') {
+      const f = board.driver.fiber();
+      if (f) f.setData(data);
+    }
+    // If the user already toggled fiber on before the fetch resolved,
+    // re-sync so the overlay actually renders.
+    syncFiberOverlay();
+  }).catch((e) => console.warn('fiber overlay: data load failed', e));
+
   // Resize: the chess driver needs an explicit resize call; the othello
   // driver scales with its container via SVG viewBox and no-ops here.
   window.addEventListener('resize', () => board.driver && board.driver.resize());
@@ -79,6 +141,10 @@ export function initBoard(rootIds = {
     syncInfoPanel();
     syncReadout();
     syncOverlay();
+    // Auto-follow-move: if enabled, switch the fiber piece selector
+    // to match whoever just moved. Only meaningful when there's a
+    // real last-move to parse (skips the starting position).
+    syncFiberFollow();
   });
   subscribe('game', () => {
     _ensureDriverForActiveCorpus();
@@ -91,6 +157,9 @@ export function initBoard(rootIds = {
   subscribe('heatmapView', syncOverlay);
   subscribe('boardOverlay', () => {
     syncOverlay();
+    // Re-sync the fiber overlay too — its gradient alpha depends on
+    // whether the channel overlay is also active (companion dim).
+    syncFiberOverlay();
     const btn = document.querySelector('button[data-action="overlay"]');
     if (btn) {
       btn.setAttribute('aria-pressed', state.boardOverlay ? 'true' : 'false');
@@ -107,6 +176,21 @@ export function initBoard(rootIds = {
       btn.setAttribute('aria-pressed', active ? 'true' : 'false');
     });
   });
+  subscribe('fiberOverlay', () => {
+    syncFiberOverlay();
+    const btn = document.querySelector('button[data-action="fiber"]');
+    if (btn) {
+      btn.setAttribute('aria-pressed', state.fiberOverlay ? 'true' : 'false');
+      btn.classList.toggle('active', state.fiberOverlay);
+    }
+    const panel = document.getElementById('fiber-controls');
+    if (panel) panel.hidden = !state.fiberOverlay;
+    syncFollowButton();
+  });
+  subscribe('fiberPiece', () => { syncFiberOverlay(); syncFiberControlHighlights(); });
+  subscribe('fiberMode',  () => { syncFiberOverlay(); syncFiberControlHighlights(); });
+  subscribe('fiberCmap',  () => { syncFiberOverlay(); syncFiberControlHighlights(); });
+  subscribe('fiberFollow', () => { syncFollowButton(); syncFiberOverlay(); });
   subscribe('plainBoard', () => {
     const host = document.getElementById(board.hostId);
     if (host) host.classList.toggle('plain-board', state.plainBoard);
@@ -155,6 +239,7 @@ function _createChessDriver(hostId) {
   // the othello driver.
   let cb = null;
   let overlay = null;
+  let fiber = null;
   return {
     init(id = hostId) {
       cb = window.Chessboard(id, {
@@ -167,22 +252,35 @@ function _createChessDriver(hostId) {
         appearSpeed: 100,
       });
       overlay = attachChessOverlay(id);
+      fiber = attachFiberOverlay(id);
     },
     setPosition(ply) {
       if (!cb) return;
       const fen = (ply && typeof ply.fen === 'string') ? ply.fen : STARTING_FEN;
       // Animate transitions (same behavior as before).
       cb.position(fen, true);
+      // The fiber gradient canvas is anchored by a1/h8 bounding rects —
+      // reposition after the piece DOM settles on each ply, since
+      // chessboard.js rebuilds the square cells on position changes
+      // larger than the simple animation path.
+      if (fiber) requestAnimationFrame(() => fiber.relayout());
     },
-    resize() { if (cb) cb.resize(); },
+    resize() {
+      if (cb) cb.resize();
+      if (fiber) fiber.relayout();
+    },
     flip()   {
       if (cb) cb.flip();
       if (overlay) overlay.setFlipped(board.flipped);
+      if (fiber)   fiber.setFlipped(board.flipped);
     },
     setOverlay(data) { if (overlay) overlay.setOverlay(data); },
+    fiber() { return fiber; },
     destroy() {
       if (overlay) { try { overlay.destroy(); } catch (e) { /* best-effort */ } }
       overlay = null;
+      if (fiber)   { try { fiber.destroy();   } catch (e) { /* best-effort */ } }
+      fiber = null;
       if (cb && typeof cb.destroy === 'function') {
         try { cb.destroy(); } catch (e) { /* chessboard.js destroy is best-effort */ }
       }
@@ -204,6 +302,61 @@ function _createChessLikeOthello(hostId) {
  * ------------------------------------------------------------------ */
 
 function handleAction(action) {
+  // Non-game-dependent actions run first so the overlay / fiber / plain
+  // toggles work even before a corpus is loaded (and during the brief
+  // window while the first game's NDJSON + spectralz are being parsed).
+  // The fiber overlay in particular is *static* — it doesn't need any
+  // ply data — so gating it on game presence was silently swallowing
+  // every click until a game finished loading.
+  switch (action) {
+    case 'overlay': {
+      // Channel overlay and fiber overlay CAN coexist as long as the
+      // fiber is in 'gradient' mode — fiber uses a separate canvas
+      // layer, channel paints per-square background-image, they don't
+      // fight at the DOM level. The only genuine conflict is fiber's
+      // 'discrete' mode, which paints the same background-image
+      // property as channel; if the user flips channel on while fiber
+      // is discrete, auto-switch fiber to gradient so both survive.
+      const turningOn = !state.boardOverlay;
+      const patch = { boardOverlay: turningOn };
+      if (turningOn && state.fiberOverlay && state.fiberMode === 'discrete') {
+        patch.fiberMode = 'gradient';
+      }
+      setState(patch);
+      return;
+    }
+    case 'fiber': {
+      // Symmetric rule: if the user is turning fiber on and channel is
+      // already on, keep channel and force gradient mode so they
+      // compose cleanly.
+      const turningOn = !state.fiberOverlay;
+      const patch = { fiberOverlay: turningOn };
+      if (turningOn && state.boardOverlay && state.fiberMode === 'discrete') {
+        patch.fiberMode = 'gradient';
+      }
+      setState(patch);
+      return;
+    }
+    case 'plain':
+      setState({ plainBoard: !state.plainBoard });
+      return;
+    case 'flip':
+      board.flipped = !board.flipped;
+      if (board.driver) board.driver.flip();
+      return;
+    case 'follow': {
+      // Auto-follow toggle lives in the chess-control row (not the
+      // fiber sub-controls) so it sits next to the ply-stepping
+      // buttons it actually affects. Visibility is driven by
+      // state.fiberOverlay — hidden when fiber is off.
+      const next = !state.fiberFollow;
+      setState({ fiberFollow: next });
+      if (next) syncFiberFollow();
+      return;
+    }
+  }
+
+  // Game-dependent actions — need a loaded game with at least one ply.
   const game = getActiveGame();
   if (!game) return;
   const n = game.spectral?.nPlies ?? game.plies?.length ?? 0;
@@ -215,12 +368,6 @@ function handleAction(action) {
     case 'last':  setState({ currentPly: n - 1 }); break;
     case 'play':  toggleAutoplay(); break;
     case 'speed': cycleSpeed(); break;
-    case 'flip':
-      board.flipped = !board.flipped;
-      if (board.driver) board.driver.flip();
-      break;
-    case 'overlay': setState({ boardOverlay: !state.boardOverlay }); break;
-    case 'plain':   setState({ plainBoard: !state.plainBoard });     break;
   }
 }
 
@@ -287,6 +434,152 @@ function syncOverlay() {
   // state is preserved so returning to a single-channel view re-shows it.
   const data = getOverlayForPly(game, state.currentPly, state.heatmapView, state.overlayTransform);
   board.driver.setOverlay(data);
+}
+
+function syncFiberOverlay() {
+  if (!board.driver || typeof board.driver.fiber !== 'function') return;
+  const f = board.driver.fiber();
+  if (!f) return;
+  // Hand the cached data over whenever the fetch eventually resolves;
+  // the overlay no-ops internally if setData hasn't been called yet.
+  if (fiberData) f.setData(fiberData);
+  f.setPiece(state.fiberPiece);
+  f.setMode(state.fiberMode);
+  f.setColormap(state.fiberCmap);
+  f.setFlipped(board.flipped);
+  // Companion flag: only meaningful while the fiber overlay is
+  // actually in gradient mode (discrete is mutex with channel).
+  f.setCompanionChannelActive(state.boardOverlay && state.fiberMode === 'gradient');
+  f.setEnabled(state.fiberOverlay && !!fiberData);
+
+  // Helper text: tell the user *why* the rook is flat rather than
+  // letting them wonder if it's broken. Rendered as an absolutely-
+  // positioned floating note (see .fiber-helper in viewer.css) so it
+  // can't push the board down when rook is selected. Visibility is
+  // a class toggle so the note can fade in/out; a hover handler on
+  // the R button re-shows it, and the post-selection flash auto-
+  // fades after ~2.5s so it doesn't sit permanently over the board.
+  const helper = document.getElementById('fiber-helper');
+  const rBtn = document.querySelector('[data-fiber-piece="R"]');
+  // Suppress the rook-helper note entirely when auto-follow is on.
+  // With follow, the piece selector is changing every ply — popping
+  // the note up every time the user plays a rook move is noise, not
+  // information. The R button still carries the native `title`
+  // tooltip so the explanation is one hover away if it's wanted.
+  const rookActive = state.fiberOverlay && state.fiberPiece === 'R' && !state.fiberFollow;
+  if (helper) {
+    if (rookActive) {
+      if (helper.textContent !== ROOK_HELPER) helper.textContent = ROOK_HELPER;
+      helper.hidden = false;
+      _showRookHelper(helper, 2500);
+    } else {
+      _cancelRookHelperTimer();
+      helper.classList.remove('is-visible');
+      helper.hidden = true;
+      helper.textContent = '';
+    }
+  }
+  if (rBtn) {
+    rBtn.title = (state.fiberOverlay && state.fiberPiece === 'R')
+      ? `Rook — ${ROOK_HELPER}`
+      : 'Rook';
+  }
+}
+
+// Rook-helper fade controller. A single shared timer handles the
+// post-selection auto-hide and the mouse-leave delay so the two can't
+// race (e.g. hovering R during the post-selection flash extends the
+// visible window rather than hiding it early).
+let _rookHelperHideTimer = null;
+function _cancelRookHelperTimer() {
+  if (_rookHelperHideTimer) {
+    clearTimeout(_rookHelperHideTimer);
+    _rookHelperHideTimer = null;
+  }
+}
+function _showRookHelper(helper, hideAfterMs) {
+  _cancelRookHelperTimer();
+  helper.classList.add('is-visible');
+  if (hideAfterMs > 0) {
+    _rookHelperHideTimer = setTimeout(() => {
+      helper.classList.remove('is-visible');
+      _rookHelperHideTimer = null;
+    }, hideAfterMs);
+  }
+}
+
+function bindRookHelperHover() {
+  const rBtn = document.querySelector('[data-fiber-piece="R"]');
+  const helper = document.getElementById('fiber-helper');
+  if (!rBtn || !helper) return;
+  rBtn.addEventListener('mouseenter', () => {
+    if (state.fiberOverlay && state.fiberPiece === 'R') {
+      _showRookHelper(helper, 0);  // stay visible while hovered
+    }
+  });
+  rBtn.addEventListener('mouseleave', () => {
+    if (state.fiberOverlay && state.fiberPiece === 'R') {
+      // Short delay so a flick off R doesn't snap the note away mid-glance.
+      _showRookHelper(helper, 400);
+    }
+  });
+}
+
+function syncFiberControlHighlights() {
+  const panel = document.getElementById('fiber-controls');
+  if (!panel) return;
+  const mark = (attr, current) => {
+    panel.querySelectorAll(`[${attr}]`).forEach((btn) => {
+      const active = btn.getAttribute(attr) === current;
+      btn.classList.toggle('active', active);
+      btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+  };
+  mark('data-fiber-piece', state.fiberPiece);
+  mark('data-fiber-mode',  state.fiberMode);
+  mark('data-fiber-cmap',  state.fiberCmap);
+}
+
+function syncFollowButton() {
+  // Follow toggle lives in the chess-control row (not the fiber
+  // sub-controls) but is only meaningful while the fiber overlay is
+  // on — otherwise there's no overlay for it to steer. Visibility
+  // and active-state both flow from the two relevant state fields.
+  const btn = document.getElementById('fiber-follow-btn');
+  if (!btn) return;
+  btn.hidden = !state.fiberOverlay;
+  btn.classList.toggle('active', state.fiberFollow);
+  btn.setAttribute('aria-pressed', state.fiberFollow ? 'true' : 'false');
+}
+
+// Parse the piece that just moved from a SAN string. N/B/R/Q/K are the
+// five uppercase piece letters; castling starts with 'O' (or a zero);
+// anything else starting with a file letter a–h is a pawn move (plain,
+// capture, or promotion). Returns one of 'P','N','B','R','Q','K' or
+// null if it can't tell.
+export function parseSanPiece(san) {
+  if (!san || typeof san !== 'string') return null;
+  const clean = san.replace(/[+#!?]+$/, '').trim();
+  if (!clean) return null;
+  if (clean.startsWith('O-O') || clean.startsWith('0-0')) return 'K';
+  const first = clean[0];
+  if ('NBRQK'.includes(first)) return first;
+  if ('abcdefgh'.includes(first)) return 'P';
+  return null;
+}
+
+function syncFiberFollow() {
+  if (!state.fiberFollow) return;
+  const game = getActiveGame();
+  if (!game || !game.plies) return;
+  const ply = clampPly(game, state.currentPly);
+  if (ply <= 0) return;  // starting position — no move to follow
+  const record = game.plies[ply];
+  if (!record) return;
+  const piece = parseSanPiece(record.san);
+  if (piece && piece !== state.fiberPiece) {
+    setState({ fiberPiece: piece });
+  }
 }
 
 function syncBoardToPly() {

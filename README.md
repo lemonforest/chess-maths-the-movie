@@ -1,6 +1,6 @@
 # Chess Spectral Lattice Fermion Viewer
 
-![version](https://img.shields.io/badge/version-v0.5.1-8b5cf6?style=flat-square)
+![version](https://img.shields.io/badge/version-v0.8.1-8b5cf6?style=flat-square)
 ![spectralz](https://img.shields.io/badge/spectralz-v2-475569?style=flat-square)
 
 A drop-in spectral analysis instrument for chess corpora. Drop a `.7z`
@@ -62,6 +62,171 @@ The viewer state is encoded in the URL fragment so positions are shareable:
 
 Loading a URL with a fragment but no corpus shows the drop zone with a hint;
 after dropping the matching corpus the viewer jumps to the requested state.
+
+## Fiber-norm overlay
+
+Toggle the **∥F∥** button in the board panel header to paint the
+per-square rank-3 fiber norm for a chosen piece type as a gradient
+over the board. The field is a static property of the chess rules,
+derived from the shared fiber bundle in the research notebook §7. It
+does **not** change as you step through plies — this overlay is
+complementary to the existing per-channel overlay (⊞), not a
+replacement.
+
+- **Pawn (P):** direction-collapsed approximation — pawn moves are
+  asymmetric (directional), so the "proper" piece Laplacian isn't
+  symmetric. For display, we build a symmetrized adjacency from the
+  union of both colours' one-square moves (vertical step + all four
+  capture diagonals, no two-square advance). The resulting field
+  has only Z2×Z2 symmetry (axis reflections + 180° rotation), NOT
+  full D4 — 90° rotation would swap vertical advances with
+  horizontal moves, which pawns don't have. Useful as a visual, but
+  mathematically distinct from the other pieces; the verification
+  gates exercise the smaller symmetry group.
+- **Knight (N):** center-bright, corners-dim. Matches the §7
+  qualitative 2:1 corner/center structure.
+- **Bishop (B):** diagonal-axis symmetric.
+- **Rook (R):** identically zero (rook rule content is in the
+  diagonal channel, not the off-diagonal fiber; see §7b). The
+  overlay paints a uniform neutral tint and displays a short helper
+  note — this is expected, not a bug.
+- **Queen (Q):** proportional to bishop (queen = bishop + rook, and
+  rook's off-diagonal contribution is zero; the bishop-queen cosine
+  is 1.000 by construction).
+- **King (K):** localized pattern reflecting the king's
+  8-neighbourhood rule.
+
+### What is the field actually showing?
+
+The overlay is **a static property of each piece's move rules on an
+8×8 board** — it does not depend on the current position, the
+occupied squares, or the ply. If you toggle between ply 2 and ply 3
+with `N` selected, the overlay looks identical, and that's correct.
+Stepping through moves changes *where the knights are*; it does not
+change *how a knight moves from any given square*, and this overlay
+visualizes the latter.
+
+The most intuitive way to read it: at each square, the field
+measures how much "rule content" that piece carries if you placed
+it there, measured specifically through the shared rank-3 fiber
+(cross-mode coupling) of the board Laplacian. Translated into chess
+terms:
+
+- **Knight.** Has 2 legal targets from `a1` (→ `b3, c2`), 3 from
+  `a2`, 4 from `a3`/`c1`, 6 from `b3`, and 8 from `d4`/`d5`/`e4`/`e5`.
+  The overlay shines brightest on the central 4×4 because those
+  squares maximise knight connectivity; corners are dim because they
+  minimise it. This is the canonical §7 example — the
+  "2:1 corner/center" shape the notebook anchors on.
+- **Bishop.** Every bishop sees at most two diagonals from any
+  square. On the central `d4`/`d5`/`e4`/`e5` squares those diagonals
+  are 13 squares long (7 + 7 + 7 + 7 intersected); on the corners
+  they cover only 7 squares (one long diagonal). So the field
+  brightens towards the centre along the diagonal axes.
+- **Rook.** Every rook sees exactly 14 squares (7 along its rank +
+  7 along its file) from *anywhere* on the board — dimension-
+  invariant. That uniformity means all of the rook's "rule content"
+  lives in the diagonal (D₄-symmetric) spectral channel, and none
+  in the off-diagonal fiber. Hence the overlay is flat zero and the
+  helper line points at §7b for the proof.
+- **Queen.** The queen's moves are the union of rook + bishop, but
+  the rook piece is fiber-invisible (see above), so only the bishop
+  part of the queen's rule set shows up in the fiber. Numerically
+  this means the bishop and queen fields are parallel as 64-vectors
+  (cosine = 1.000), just at a different overall scale — the
+  viewer's per-piece range normalisation maps both to the full
+  colour ramp so the *shape* is visible even though the absolute
+  brightness differs.
+- **King.** A king has 3 legal targets in the corner, 5 along an
+  edge, and 8 in the interior. That gives a much gentler
+  corner→centre gradient than the knight (3:8 vs. 2:8) and also
+  fewer long-range couplings, so the king field is both smaller in
+  range and more localised than the knight's.
+
+The easy first sanity check from a chess perspective: count the
+legal moves of the selected piece from a corner square vs. a
+central square in your head (or on paper). If the overlay is darker
+where you counted fewer moves and brighter where you counted more —
+for `N`, `B`, `Q`, `K` — it's working. `R` is the principled
+exception.
+
+The sub-controls that appear when the overlay is on:
+
+| Control | Options | Effect |
+|---|---|---|
+| piece    | P N B R Q K          | which piece type to paint (pawn is direction-collapsed — see above) |
+| render   | smooth / tiles       | bilinear-upsampled canvas gradient vs. discrete per-square tiles |
+| colormap | viridis / div / mono | perceptually uniform / divergent-around-mean / greyscale elevation |
+
+Additionally, a **follow ⇝** button appears in the chess-control row
+(next to the flip ⇅ button) while the fiber overlay is on. When it's
+active, stepping through plies auto-switches the piece selector to
+match whoever just moved: castling resolves to K (O-O and O-O-O),
+pawn moves (including captures and promotions) resolve to P,
+everything else reads off the leading SAN letter. On the starting
+position the selector holds whatever was last chosen. Turning follow
+on also suppresses the rook-helper note — with follow, the R piece
+is just one of many that'll be selected in passing, so the long
+explanation would be noise; the R button's native hover tooltip
+still carries the same text if it's wanted.
+
+### Combining with the channel overlay
+
+The fiber overlay (`∥F∥`) and the channel overlay (`⊞`) can be on
+at the same time. They occupy different layers — fiber paints onto
+a dedicated `<canvas>` that sits above the board squares but below
+the piece sprites; channel paints each square's `background-image`
+directly — so they compose into a two-channel visualization:
+
+- **fiber = ambient elevation** (static, tells you "where does this
+  piece's rule content live on an 8×8 board?")
+- **channel = localised signal spikes** (dynamic, tells you "what
+  is this piece's spectral channel doing right now?")
+
+When both are on the fiber canvas auto-dims from alpha 0.72 to 0.42
+so the channel tints stay readable through it. Pick the `mono`
+colormap for the cleanest compose — its greyscale ramp stays out
+of the channel palette's cyan/amber hue zone, so the fiber reads
+as pure brightness and the channel keeps all the chroma to itself.
+
+The fiber's `tiles` mode does genuinely conflict with the channel
+overlay (both paint the same `background-image` property), so
+turning channel on while fiber is in `tiles` auto-promotes fiber to
+`smooth`, and picking `tiles` while channel is on auto-disables
+channel.
+
+Range normalization is **per piece**, so each piece's [min, max]
+maps to the full color scale independently — this preserves visual
+detail across pieces with different absolute magnitudes. The URL
+hash carries `fiber=<piece>,<mode>,<cmap>` when the overlay is on
+(with an extra `,follow` suffix when auto-follow is enabled), so
+you can share a specific view.
+
+### Regenerating the fiber data
+
+The per-square values live in `data/fiber_norms.json` and are
+produced offline by a single script:
+
+```bash
+pip install -e '.[fiber]'              # numpy
+python3 scripts/generate_fiber_norms.py
+```
+
+The script builds the 8×8 grid Laplacian in the tensor-product
+eigenbasis, derives the rank-3 shared-fiber basis orthogonal to
+rook's per-square fluctuations, and writes the 6 × 64 field with
+per-piece range metadata. The V3 basis is derived from N/B/Q/K
+only; pawn is projected onto the same V3 afterwards so existing
+N/B/Q/K values stay stable. Verification gates enforced on write
+(and re-checked by `pytest -q tests/test_fiber_norms.py`):
+
+- rook field is identically zero (tol 1e-9)
+- each full-symmetry piece (N/B/R/Q/K) is D4-invariant under the 8
+  symmetries of the square
+- pawn is Z2×Z2-invariant but NOT D4-invariant (direction-collapsed
+  adjacency — see the pawn bullet above)
+- bishop-queen cosine > 0.999999
+- knight corner a1 < center d4
 
 ## Corpus format
 
@@ -208,11 +373,13 @@ chess-maths-viewer/
 │   ├── opfs.js           Origin Private File System cache for per-game entries
 │   ├── board.js          chessboard.js driver, FEN sync, playback
 │   ├── chess-overlay.js  Paints per-square channel tint into chessboard.js squares
+│   ├── fiber-overlay.js  Static rank-3 fiber-norm overlay (per piece type)
 │   ├── othello-board.js  SVG driver for Othello corpora (swap-in for board.js)
 │   ├── spectral.js       Channel registry, canvas heatmap renderer
 │   ├── charts.js         D3 line chart, eval overlay, crosshair tooltip
 │   ├── lru.js            LRU eviction for parsed game state
 │   └── virtual-table.js  Virtual scroller for the corpus table
+├── data/                 Static assets generated offline (fiber_norms.json)
 ├── dataset/              Bundled .7z corpora + generated index.json
 ├── scripts/              Dev utilities (run with node ≥18)
 └── lib/                  Vendored JS libraries
@@ -231,8 +398,10 @@ External dependencies (CDN, no install required):
 Two test suites run in CI (see `.github/workflows/ci.yml`):
 
 - **Python** — `pytest -q` exercises the bundled `othello` library
-  (`tests/test_board.py`, `tests/test_svg.py`). Requires the dev extra:
-  `pip install -e '.[dev]'`.
+  (`tests/test_board.py`, `tests/test_svg.py`) and the fiber-norm data
+  file (`tests/test_fiber_norms.py` — rook-is-zero, D4 symmetry,
+  bishop-queen parallel, range metadata consistency). Requires the
+  dev extra: `pip install -e '.[dev]'`.
 - **JavaScript** — `npm test` runs a [vitest](https://vitest.dev/)
   suite under `tests-js/`:
     - `lru.test.js` — eviction order, pin safety, error tolerance of
