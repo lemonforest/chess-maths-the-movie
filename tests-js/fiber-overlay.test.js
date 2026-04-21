@@ -111,6 +111,62 @@ describe('fiber overlay toggle', () => {
     expect(rBtn.getAttribute('title')).toBe('Rook');
   });
 
+  it('follow button lives in the chess-control row and hides when fiber is off', async () => {
+    vi.resetModules();
+    const { initBoard } = await import('../js/board.js');
+    const { state } = await import('../js/app.js');
+    initBoard();
+
+    const followBtn = document.getElementById('fiber-follow-btn');
+    expect(followBtn).toBeTruthy();
+    // Sits inside #board-controls (chess-control row), not fiber-controls.
+    expect(followBtn.closest('#board-controls')).toBeTruthy();
+    expect(followBtn.closest('#fiber-controls')).toBeNull();
+    // Hidden while the fiber overlay is off.
+    expect(followBtn.hidden).toBe(true);
+
+    // Turning fiber on reveals the follow button.
+    document.querySelector('button[data-action="fiber"]')
+      .dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    expect(state.fiberOverlay).toBe(true);
+    expect(followBtn.hidden).toBe(false);
+
+    // Clicking follow flips state.fiberFollow and paints the .active class.
+    followBtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    expect(state.fiberFollow).toBe(true);
+    expect(followBtn.classList.contains('active')).toBe(true);
+
+    // Turning fiber off again re-hides the button (follow flag persists).
+    document.querySelector('button[data-action="fiber"]')
+      .dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    expect(state.fiberOverlay).toBe(false);
+    expect(followBtn.hidden).toBe(true);
+  });
+
+  it('follow-moves suppresses the rook-helper tooltip when R is selected', async () => {
+    vi.resetModules();
+    const { initBoard } = await import('../js/board.js');
+    const { state, set: setState } = await import('../js/app.js');
+    initBoard();
+
+    document.querySelector('button[data-action="fiber"]')
+      .dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    document.querySelector('button[data-fiber-piece="R"]')
+      .dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+
+    const helper = document.getElementById('fiber-helper');
+    expect(helper.hidden).toBe(false);   // follow off → helper shows
+
+    // Turning follow on should hide the helper.
+    setState({ fiberFollow: true });
+    expect(state.fiberFollow).toBe(true);
+    expect(helper.hidden).toBe(true);
+
+    // Turning follow off restores it.
+    setState({ fiberFollow: false });
+    expect(helper.hidden).toBe(false);
+  });
+
   it('selecting P from the piece selector paints the pawn field', async () => {
     vi.resetModules();
     const { initBoard } = await import('../js/board.js');

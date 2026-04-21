@@ -641,15 +641,6 @@ button { font-family: inherit; }
   pointer-events: none;
 }
 .fiber-controls .seg-control { align-self: center; }
-/* Standalone "follow moves" toggle sits next to the three seg-controls.
-   Styled as a single seg-btn with a short glyph to keep the row from
-   wrapping and booping the board. */
-.fiber-controls .follow-btn {
-  align-self: center;
-  min-width: 26px;
-  font-size: 12px;
-  line-height: 1;
-}
 /* Rook-helper note: floats as a tooltip overlay anchored to the bottom-
    left of the fiber-controls row rather than sitting inline. Inline
    placement with `flex: 1; min-width: 180px` made the row wrap (its

@@ -134,9 +134,6 @@
             <button data-fiber-cmap="mono" class="seg-btn" type="button"
                     title="Greyscale elevation — stays out of channel's hue zone when both overlays are on">mono</button>
           </div>
-          <button id="fiber-follow-btn" data-fiber-follow class="seg-btn follow-btn"
-                  type="button" aria-pressed="false"
-                  title="Follow moves: auto-switch the piece to match whoever just moved as you step through plies">⇝</button>
           <span id="fiber-helper" class="fiber-helper mono dim" hidden></span>
         </div>
         <div id="board" class="board-host"></div>
@@ -148,6 +145,9 @@
           <button data-action="last"  title="Last ply (End)" type="button">⏭</button>
           <button data-action="speed" id="speed-btn" type="button" title="Autoplay speed">500ms</button>
           <button data-action="flip"  title="Flip board" type="button">⇅</button>
+          <button data-action="follow" id="fiber-follow-btn" type="button"
+                  aria-pressed="false" hidden
+                  title="Follow moves: auto-switch the fiber piece to match whoever just moved">⇝</button>
         </div>
         <dl id="board-info" class="info-grid mono">
           <dt>Move</dt>      <dd id="info-move">—</dd>
@@ -242,7 +242,7 @@
 
   <footer id="footer">
     <span>Chess Spectral Lattice Fermion · mlehaptics project · 2026</span>
-    <span class="mono dim" id="version-tag">viewer v0.8.0 · spectralz v2 · 10 channels × 64 modes</span>
+    <span class="mono dim" id="version-tag">viewer v0.8.1 · spectralz v2 · 10 channels × 64 modes</span>
   </footer>
 
   <script type="module" src="./js/app.js"></script>

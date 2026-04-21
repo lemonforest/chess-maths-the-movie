@@ -10,6 +10,25 @@ significant UX additions, patch bumps for fixes and infrastructure.
 The `.spectralz` format version is tracked separately in
 `README.md` and the file's header bytes.
 
+## v0.8.1 — 2026-04-21
+
+### Changed
+- **Follow ⇝ button moved from the fiber sub-controls to the chess-
+  control row**, next to the flip ⇅ button. At typical desktop
+  widths the fiber sub-controls row couldn't fit all four children
+  (piece · mode · cmap · follow) on one line, so follow wrapped to
+  a second row and dangled below the rest. The chess-control row
+  has room and is the more logical home anyway — auto-follow
+  steers which piece shows per ply, so it belongs next to the
+  ply-stepping buttons it's coupled to. Visibility is still gated
+  on `state.fiberOverlay` (hidden when fiber is off).
+- **Follow suppresses the rook-helper note.** When auto-follow is
+  on and a rook move rolls past, the tooltip used to flash over
+  the top of the board. With follow enabled that's noise rather
+  than information, so the helper is suppressed entirely in that
+  mode. The R button's native `title` tooltip still carries the
+  explanation for anyone who wants it.
+
 ## v0.8.0 — 2026-04-21
 
 ### Added

@@ -1,6 +1,6 @@
 # Chess Spectral Lattice Fermion Viewer
 
-![version](https://img.shields.io/badge/version-v0.8.0-8b5cf6?style=flat-square)
+![version](https://img.shields.io/badge/version-v0.8.1-8b5cf6?style=flat-square)
 ![spectralz](https://img.shields.io/badge/spectralz-v2-475569?style=flat-square)
 
 A drop-in spectral analysis instrument for chess corpora. Drop a `.7z`
@@ -157,15 +157,18 @@ The sub-controls that appear when the overlay is on:
 | piece    | P N B R Q K          | which piece type to paint (pawn is direction-collapsed — see above) |
 | render   | smooth / tiles       | bilinear-upsampled canvas gradient vs. discrete per-square tiles |
 | colormap | viridis / div / mono | perceptually uniform / divergent-around-mean / greyscale elevation |
-| follow ⇝ | off / on             | auto-switch the piece to match whoever just moved as you step through plies |
 
-The **follow ⇝** toggle is convenient for stepping through a game
-without having to pick the piece by hand: step forward and the
-overlay flips to that piece's fiber field. Castling counts as the
-king (O-O and O-O-O both resolve to K); pawn moves (including
-captures and promotions) resolve to P; everything else reads off the
-leading SAN letter. On the starting position the selector holds
-whatever was last chosen.
+Additionally, a **follow ⇝** button appears in the chess-control row
+(next to the flip ⇅ button) while the fiber overlay is on. When it's
+active, stepping through plies auto-switches the piece selector to
+match whoever just moved: castling resolves to K (O-O and O-O-O),
+pawn moves (including captures and promotions) resolve to P,
+everything else reads off the leading SAN letter. On the starting
+position the selector holds whatever was last chosen. Turning follow
+on also suppresses the rook-helper note — with follow, the R piece
+is just one of many that'll be selected in passing, so the long
+explanation would be noise; the R button's native hover tooltip
+still carries the same text if it's wanted.
 
 ### Combining with the channel overlay
 

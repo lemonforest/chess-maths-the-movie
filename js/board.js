@@ -112,16 +112,6 @@ export function initBoard(rootIds = {
       const cBtn = evt.target.closest('button[data-fiber-cmap]');
       if (cBtn && FIBER_CMAP_IDS.includes(cBtn.dataset.fiberCmap)) {
         setState({ fiberCmap: cBtn.dataset.fiberCmap });
-        return;
-      }
-      const fBtn = evt.target.closest('button[data-fiber-follow]');
-      if (fBtn) {
-        const next = !state.fiberFollow;
-        setState({ fiberFollow: next });
-        // If the user just turned follow ON, sync immediately to the
-        // current ply's moved piece so they don't have to step once to
-        // see the effect.
-        if (next) syncFiberFollow();
       }
     });
     bindRookHelperHover();
@@ -195,11 +185,12 @@ export function initBoard(rootIds = {
     }
     const panel = document.getElementById('fiber-controls');
     if (panel) panel.hidden = !state.fiberOverlay;
+    syncFollowButton();
   });
   subscribe('fiberPiece', () => { syncFiberOverlay(); syncFiberControlHighlights(); });
   subscribe('fiberMode',  () => { syncFiberOverlay(); syncFiberControlHighlights(); });
   subscribe('fiberCmap',  () => { syncFiberOverlay(); syncFiberControlHighlights(); });
-  subscribe('fiberFollow', () => { syncFiberControlHighlights(); });
+  subscribe('fiberFollow', () => { syncFollowButton(); syncFiberOverlay(); });
   subscribe('plainBoard', () => {
     const host = document.getElementById(board.hostId);
     if (host) host.classList.toggle('plain-board', state.plainBoard);
@@ -353,6 +344,16 @@ function handleAction(action) {
       board.flipped = !board.flipped;
       if (board.driver) board.driver.flip();
       return;
+    case 'follow': {
+      // Auto-follow toggle lives in the chess-control row (not the
+      // fiber sub-controls) so it sits next to the ply-stepping
+      // buttons it actually affects. Visibility is driven by
+      // state.fiberOverlay — hidden when fiber is off.
+      const next = !state.fiberFollow;
+      setState({ fiberFollow: next });
+      if (next) syncFiberFollow();
+      return;
+    }
   }
 
   // Game-dependent actions — need a loaded game with at least one ply.
@@ -460,7 +461,12 @@ function syncFiberOverlay() {
   // fades after ~2.5s so it doesn't sit permanently over the board.
   const helper = document.getElementById('fiber-helper');
   const rBtn = document.querySelector('[data-fiber-piece="R"]');
-  const rookActive = state.fiberOverlay && state.fiberPiece === 'R';
+  // Suppress the rook-helper note entirely when auto-follow is on.
+  // With follow, the piece selector is changing every ply — popping
+  // the note up every time the user plays a rook move is noise, not
+  // information. The R button still carries the native `title`
+  // tooltip so the explanation is one hover away if it's wanted.
+  const rookActive = state.fiberOverlay && state.fiberPiece === 'R' && !state.fiberFollow;
   if (helper) {
     if (rookActive) {
       if (helper.textContent !== ROOK_HELPER) helper.textContent = ROOK_HELPER;
@@ -474,7 +480,9 @@ function syncFiberOverlay() {
     }
   }
   if (rBtn) {
-    rBtn.title = rookActive ? `Rook — ${ROOK_HELPER}` : 'Rook';
+    rBtn.title = (state.fiberOverlay && state.fiberPiece === 'R')
+      ? `Rook — ${ROOK_HELPER}`
+      : 'Rook';
   }
 }
 
@@ -530,13 +538,18 @@ function syncFiberControlHighlights() {
   mark('data-fiber-piece', state.fiberPiece);
   mark('data-fiber-mode',  state.fiberMode);
   mark('data-fiber-cmap',  state.fiberCmap);
-  // Follow toggle is a single-button boolean, not a value-set; highlight
-  // it based on state.fiberFollow directly.
-  const followBtn = panel.querySelector('[data-fiber-follow]');
-  if (followBtn) {
-    followBtn.classList.toggle('active', state.fiberFollow);
-    followBtn.setAttribute('aria-pressed', state.fiberFollow ? 'true' : 'false');
-  }
+}
+
+function syncFollowButton() {
+  // Follow toggle lives in the chess-control row (not the fiber
+  // sub-controls) but is only meaningful while the fiber overlay is
+  // on — otherwise there's no overlay for it to steer. Visibility
+  // and active-state both flow from the two relevant state fields.
+  const btn = document.getElementById('fiber-follow-btn');
+  if (!btn) return;
+  btn.hidden = !state.fiberOverlay;
+  btn.classList.toggle('active', state.fiberFollow);
+  btn.setAttribute('aria-pressed', state.fiberFollow ? 'true' : 'false');
 }
 
 // Parse the piece that just moved from a SAN string. N/B/R/Q/K are the
