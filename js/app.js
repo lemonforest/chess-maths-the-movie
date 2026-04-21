@@ -21,7 +21,7 @@ import { createVirtualTable } from './virtual-table.js';
  *  a stale-cached app.js can't downgrade the displayed version after a
  *  fresh HTML load. Keep this, the HTML tag, README, and package.json in
  *  sync on every release. */
-export const APP_VERSION = 'v0.7.0';
+export const APP_VERSION = 'v0.8.0';
 
 /* ------------------------------------------------------------------ *
  * State store
@@ -44,9 +44,11 @@ export const state = {
   // flags live here so the UI buttons can track pressed state
   // independently.
   fiberOverlay: false,       // show the fiber-norm overlay?
-  fiberPiece:   'N',         // 'N' | 'B' | 'R' | 'Q' | 'K'
+  fiberPiece:   'N',         // 'P' | 'N' | 'B' | 'R' | 'Q' | 'K'
   fiberMode:    'gradient',  // 'gradient' | 'discrete'
-  fiberCmap:    'viridis',   // 'viridis' | 'diverging'
+  fiberCmap:    'viridis',   // 'viridis' | 'diverging' | 'mono'
+  fiberFollow:  false,       // auto-switch fiberPiece to the piece that
+                             // just moved on each ply change?
 
   chartScale: 'z',
   pendingHash: null,        // { game, ply } from URL when corpus not loaded yet
@@ -126,7 +128,9 @@ function syncHash() {
     params.set('tx', state.overlayTransform);
   }
   if (state.fiberOverlay) {
-    params.set('fiber', [state.fiberPiece, state.fiberMode, state.fiberCmap].join(','));
+    const parts = [state.fiberPiece, state.fiberMode, state.fiberCmap];
+    if (state.fiberFollow) parts.push('follow');
+    params.set('fiber', parts.join(','));
   }
   history.replaceState(null, '', '#' + params.toString());
 }
@@ -279,10 +283,11 @@ async function startLoad(file) {
     if (hash?.scale)    state.chartScale = hash.scale;
     if (hash?.transform) state.overlayTransform = hash.transform;
     if (hash?.fiber) {
-      const [p, m, c] = hash.fiber.split(',');
-      if (['N','B','R','Q','K'].includes(p))          state.fiberPiece = p;
-      if (['gradient','discrete'].includes(m))         state.fiberMode  = m;
-      if (['viridis','diverging'].includes(c))         state.fiberCmap  = c;
+      const [p, m, c, follow] = hash.fiber.split(',');
+      if (['P','N','B','R','Q','K'].includes(p))              state.fiberPiece = p;
+      if (['gradient','discrete'].includes(m))                 state.fiberMode  = m;
+      if (['viridis','diverging','mono'].includes(c))          state.fiberCmap  = c;
+      if (follow === 'follow')                                  state.fiberFollow = true;
       state.fiberOverlay = true;
     }
 
@@ -324,6 +329,7 @@ async function startLoad(file) {
     emit('fiberMode');
     emit('fiberCmap');
     emit('fiberOverlay');
+    emit('fiberFollow');
     emit('ply');
     syncHash();
   } catch (err) {

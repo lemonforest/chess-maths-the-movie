@@ -101,10 +101,56 @@ describe('fiber overlay toggle', () => {
     const helper = document.getElementById('fiber-helper');
     expect(helper.hidden).toBe(false);
     expect(helper.textContent).toMatch(/identically zero/);
+    // Native tooltip on R button mirrors the message.
+    expect(rBtn.getAttribute('title')).toMatch(/identically zero/);
 
     // Back to knight — helper hides.
     const nBtn = document.querySelector('button[data-fiber-piece="N"]');
     nBtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
     expect(helper.hidden).toBe(true);
+    expect(rBtn.getAttribute('title')).toBe('Rook');
+  });
+
+  it('selecting P from the piece selector paints the pawn field', async () => {
+    vi.resetModules();
+    const { initBoard } = await import('../js/board.js');
+    const { state } = await import('../js/app.js');
+    initBoard();
+
+    const fiberBtn = document.querySelector('button[data-action="fiber"]');
+    fiberBtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+
+    const pBtn = document.querySelector('button[data-fiber-piece="P"]');
+    expect(pBtn).toBeTruthy();
+    pBtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    expect(state.fiberPiece).toBe('P');
+
+    // Helper should stay hidden (only rook triggers it).
+    const helper = document.getElementById('fiber-helper');
+    expect(helper.hidden).toBe(true);
+  });
+});
+
+describe('parseSanPiece', () => {
+  it('maps SAN first character to piece letter', async () => {
+    const { parseSanPiece } = await import('../js/board.js');
+    expect(parseSanPiece('Nf3')).toBe('N');
+    expect(parseSanPiece('Bxe5')).toBe('B');
+    expect(parseSanPiece('Rae1')).toBe('R');
+    expect(parseSanPiece('Qh5+')).toBe('Q');
+    expect(parseSanPiece('Kxf7')).toBe('K');
+    // Castling both notations
+    expect(parseSanPiece('O-O')).toBe('K');
+    expect(parseSanPiece('O-O-O')).toBe('K');
+    expect(parseSanPiece('0-0')).toBe('K');
+    // Pawn variants
+    expect(parseSanPiece('e4')).toBe('P');
+    expect(parseSanPiece('exd5')).toBe('P');
+    expect(parseSanPiece('e8=Q')).toBe('P');
+    expect(parseSanPiece('e8=Q+')).toBe('P');
+    // Garbage
+    expect(parseSanPiece('')).toBe(null);
+    expect(parseSanPiece(null)).toBe(null);
+    expect(parseSanPiece(undefined)).toBe(null);
   });
 });

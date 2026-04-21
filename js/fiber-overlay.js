@@ -30,7 +30,9 @@
  */
 
 const FILES = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
-const PIECE_TO_KEY = { N: 'knight', B: 'bishop', R: 'rook', Q: 'queen', K: 'king' };
+const PIECE_TO_KEY = {
+  P: 'pawn', N: 'knight', B: 'bishop', R: 'rook', Q: 'queen', K: 'king',
+};
 
 const VIRIDIS = [
   [ 68,   1,  84],

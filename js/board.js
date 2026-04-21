@@ -22,7 +22,7 @@ import { attachChessOverlay } from './chess-overlay.js';
 import { attachFiberOverlay, loadFiberNorms } from './fiber-overlay.js';
 import { getOverlayForPly, OVERLAY_TRANSFORM_IDS } from './spectral.js';
 
-const FIBER_PIECE_IDS = ['N', 'B', 'R', 'Q', 'K'];
+const FIBER_PIECE_IDS = ['P', 'N', 'B', 'R', 'Q', 'K'];
 const FIBER_MODE_IDS  = ['gradient', 'discrete'];
 const FIBER_CMAP_IDS  = ['viridis', 'diverging', 'mono'];
 const ROOK_HELPER = 'Rook fiber is identically zero — its rule content ' +
@@ -112,8 +112,19 @@ export function initBoard(rootIds = {
       const cBtn = evt.target.closest('button[data-fiber-cmap]');
       if (cBtn && FIBER_CMAP_IDS.includes(cBtn.dataset.fiberCmap)) {
         setState({ fiberCmap: cBtn.dataset.fiberCmap });
+        return;
+      }
+      const fBtn = evt.target.closest('button[data-fiber-follow]');
+      if (fBtn) {
+        const next = !state.fiberFollow;
+        setState({ fiberFollow: next });
+        // If the user just turned follow ON, sync immediately to the
+        // current ply's moved piece so they don't have to step once to
+        // see the effect.
+        if (next) syncFiberFollow();
       }
     });
+    bindRookHelperHover();
   }
 
   // Fetch the static fiber-norms data once. Small enough (~5 KB) that a
@@ -140,6 +151,10 @@ export function initBoard(rootIds = {
     syncInfoPanel();
     syncReadout();
     syncOverlay();
+    // Auto-follow-move: if enabled, switch the fiber piece selector
+    // to match whoever just moved. Only meaningful when there's a
+    // real last-move to parse (skips the starting position).
+    syncFiberFollow();
   });
   subscribe('game', () => {
     _ensureDriverForActiveCorpus();
@@ -184,6 +199,7 @@ export function initBoard(rootIds = {
   subscribe('fiberPiece', () => { syncFiberOverlay(); syncFiberControlHighlights(); });
   subscribe('fiberMode',  () => { syncFiberOverlay(); syncFiberControlHighlights(); });
   subscribe('fiberCmap',  () => { syncFiberOverlay(); syncFiberControlHighlights(); });
+  subscribe('fiberFollow', () => { syncFiberControlHighlights(); });
   subscribe('plainBoard', () => {
     const host = document.getElementById(board.hostId);
     if (host) host.classList.toggle('plain-board', state.plainBoard);
@@ -438,17 +454,21 @@ function syncFiberOverlay() {
   // Helper text: tell the user *why* the rook is flat rather than
   // letting them wonder if it's broken. Rendered as an absolutely-
   // positioned floating note (see .fiber-helper in viewer.css) so it
-  // can't push the board down when rook is selected. We also mirror
-  // the text into the R button's `title` for a native browser
-  // tooltip on hover — redundant but nice for discoverability.
+  // can't push the board down when rook is selected. Visibility is
+  // a class toggle so the note can fade in/out; a hover handler on
+  // the R button re-shows it, and the post-selection flash auto-
+  // fades after ~2.5s so it doesn't sit permanently over the board.
   const helper = document.getElementById('fiber-helper');
   const rBtn = document.querySelector('[data-fiber-piece="R"]');
   const rookActive = state.fiberOverlay && state.fiberPiece === 'R';
   if (helper) {
     if (rookActive) {
-      helper.textContent = ROOK_HELPER;
+      if (helper.textContent !== ROOK_HELPER) helper.textContent = ROOK_HELPER;
       helper.hidden = false;
+      _showRookHelper(helper, 2500);
     } else {
+      _cancelRookHelperTimer();
+      helper.classList.remove('is-visible');
       helper.hidden = true;
       helper.textContent = '';
     }
@@ -456,6 +476,45 @@ function syncFiberOverlay() {
   if (rBtn) {
     rBtn.title = rookActive ? `Rook — ${ROOK_HELPER}` : 'Rook';
   }
+}
+
+// Rook-helper fade controller. A single shared timer handles the
+// post-selection auto-hide and the mouse-leave delay so the two can't
+// race (e.g. hovering R during the post-selection flash extends the
+// visible window rather than hiding it early).
+let _rookHelperHideTimer = null;
+function _cancelRookHelperTimer() {
+  if (_rookHelperHideTimer) {
+    clearTimeout(_rookHelperHideTimer);
+    _rookHelperHideTimer = null;
+  }
+}
+function _showRookHelper(helper, hideAfterMs) {
+  _cancelRookHelperTimer();
+  helper.classList.add('is-visible');
+  if (hideAfterMs > 0) {
+    _rookHelperHideTimer = setTimeout(() => {
+      helper.classList.remove('is-visible');
+      _rookHelperHideTimer = null;
+    }, hideAfterMs);
+  }
+}
+
+function bindRookHelperHover() {
+  const rBtn = document.querySelector('[data-fiber-piece="R"]');
+  const helper = document.getElementById('fiber-helper');
+  if (!rBtn || !helper) return;
+  rBtn.addEventListener('mouseenter', () => {
+    if (state.fiberOverlay && state.fiberPiece === 'R') {
+      _showRookHelper(helper, 0);  // stay visible while hovered
+    }
+  });
+  rBtn.addEventListener('mouseleave', () => {
+    if (state.fiberOverlay && state.fiberPiece === 'R') {
+      // Short delay so a flick off R doesn't snap the note away mid-glance.
+      _showRookHelper(helper, 400);
+    }
+  });
 }
 
 function syncFiberControlHighlights() {
@@ -471,6 +530,43 @@ function syncFiberControlHighlights() {
   mark('data-fiber-piece', state.fiberPiece);
   mark('data-fiber-mode',  state.fiberMode);
   mark('data-fiber-cmap',  state.fiberCmap);
+  // Follow toggle is a single-button boolean, not a value-set; highlight
+  // it based on state.fiberFollow directly.
+  const followBtn = panel.querySelector('[data-fiber-follow]');
+  if (followBtn) {
+    followBtn.classList.toggle('active', state.fiberFollow);
+    followBtn.setAttribute('aria-pressed', state.fiberFollow ? 'true' : 'false');
+  }
+}
+
+// Parse the piece that just moved from a SAN string. N/B/R/Q/K are the
+// five uppercase piece letters; castling starts with 'O' (or a zero);
+// anything else starting with a file letter a–h is a pawn move (plain,
+// capture, or promotion). Returns one of 'P','N','B','R','Q','K' or
+// null if it can't tell.
+export function parseSanPiece(san) {
+  if (!san || typeof san !== 'string') return null;
+  const clean = san.replace(/[+#!?]+$/, '').trim();
+  if (!clean) return null;
+  if (clean.startsWith('O-O') || clean.startsWith('0-0')) return 'K';
+  const first = clean[0];
+  if ('NBRQK'.includes(first)) return first;
+  if ('abcdefgh'.includes(first)) return 'P';
+  return null;
+}
+
+function syncFiberFollow() {
+  if (!state.fiberFollow) return;
+  const game = getActiveGame();
+  if (!game || !game.plies) return;
+  const ply = clampPly(game, state.currentPly);
+  if (ply <= 0) return;  // starting position — no move to follow
+  const record = game.plies[ply];
+  if (!record) return;
+  const piece = parseSanPiece(record.san);
+  if (piece && piece !== state.fiberPiece) {
+    setState({ fiberPiece: piece });
+  }
 }
 
 function syncBoardToPly() {

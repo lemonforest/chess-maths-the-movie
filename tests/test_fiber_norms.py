@@ -78,14 +78,29 @@ def _is_d4_symmetric(vec, atol=1e-6):
     return True
 
 
+# Klein-4 subgroup of D4: identity + 180° rotation + two axis reflections.
+# Index order matches _d4_perms above.
+_KLEIN4_INDICES = (0, 2, 4, 5)
+
+
+def _is_klein4_symmetric(vec, atol=1e-6):
+    for idx in _KLEIN4_INDICES:
+        perm = _D4[idx]
+        for i in range(len(vec)):
+            if abs(vec[i] - vec[perm[i]]) > atol:
+                return False
+    return True
+
+
 # ---------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------
 def test_file_structure(doc):
     """Schema sanity: the fields promised in the spec are present."""
-    assert doc["version"] == 1
-    assert doc["piece_order"] == ["knight", "bishop", "rook", "queen", "king"]
+    assert doc["version"] == 2
+    assert doc["piece_order"] == ["pawn", "knight", "bishop", "rook", "queen", "king"]
     assert doc["rook_is_identically_zero"] is True
+    assert doc.get("pawn_is_direction_collapsed") is True
     for p in doc["piece_order"]:
         assert len(doc["values"][p]) == 64, f"{p}: expected 64 values"
         assert p in doc["ranges"]
@@ -105,11 +120,30 @@ def test_rook_is_zero(doc):
 
 @pytest.mark.parametrize("piece", ["knight", "bishop", "rook", "queen", "king"])
 def test_d4_symmetry(doc, piece):
-    """Every field is invariant under the 8 symmetries of the square.
-    This is a consequence of chess's move rules on an 8x8 board — every
-    piece's unobstructed move set respects the D4 group."""
+    """Every D4-class field is invariant under the 8 symmetries of the
+    square. Pawn is excluded — its adjacency is direction-collapsed
+    (vertical + diagonals, no horizontals), so only the Z2 x Z2
+    subgroup applies; see test_pawn_klein4_symmetry below."""
     vals = doc["values"][piece]
     assert _is_d4_symmetric(vals), f"{piece}: field not D4-symmetric"
+
+
+def test_pawn_klein4_symmetry(doc):
+    """Pawn: invariant under axis reflections + 180° rotation only.
+    90° rotation would swap vertical advances with horizontal moves,
+    which pawns don't have. So pawn sits in D4's Z2 x Z2 subgroup."""
+    vals = doc["values"]["pawn"]
+    assert _is_klein4_symmetric(vals), "pawn: field not Z2xZ2-symmetric"
+
+
+def test_pawn_not_d4_symmetric(doc):
+    """The pawn field must NOT be D4-symmetric — if it were, we'd have
+    accidentally added horizontal moves (which pawns don't have) to
+    the adjacency. Sanity gate against the simplest regression."""
+    vals = doc["values"]["pawn"]
+    assert not _is_d4_symmetric(vals), (
+        "pawn field came out D4-symmetric — pawn_adj() is over-symmetric"
+    )
 
 
 def test_bishop_queen_proportional(doc):
@@ -141,7 +175,7 @@ def test_knight_corner_center_structure(doc):
     )
 
 
-@pytest.mark.parametrize("piece", ["knight", "bishop", "queen", "king"])
+@pytest.mark.parametrize("piece", ["pawn", "knight", "bishop", "queen", "king"])
 def test_ranges_make_sense(doc, piece):
     """For each non-rook piece: min > 0, max > min, and the stored range
     metadata matches recomputation from the values array."""

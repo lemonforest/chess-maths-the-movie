@@ -641,6 +641,15 @@ button { font-family: inherit; }
   pointer-events: none;
 }
 .fiber-controls .seg-control { align-self: center; }
+/* Standalone "follow moves" toggle sits next to the three seg-controls.
+   Styled as a single seg-btn with a short glyph to keep the row from
+   wrapping and booping the board. */
+.fiber-controls .follow-btn {
+  align-self: center;
+  min-width: 26px;
+  font-size: 12px;
+  line-height: 1;
+}
 /* Rook-helper note: floats as a tooltip overlay anchored to the bottom-
    left of the fiber-controls row rather than sitting inline. Inline
    placement with `flex: 1; min-width: 180px` made the row wrap (its
@@ -665,7 +674,13 @@ button { font-family: inherit; }
   border-radius: 3px;
   pointer-events: none;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+  /* Auto-fade behaviour: the note flashes in when rook is first
+     picked (or re-appears on R hover), then fades out once the
+     mouse leaves R so the board isn't permanently half-covered. */
+  opacity: 0;
+  transition: opacity 180ms ease-out;
 }
+.fiber-helper.is-visible { opacity: 1; }
 
 /* chessboard.js dark theme tweaks */
 .white-1e1d7 { background-color: #2a2a3e !important; color: #1a1a2e !important; }

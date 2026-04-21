@@ -112,6 +112,8 @@
         <div id="fiber-controls" class="fiber-controls" hidden
              aria-label="Fiber overlay controls">
           <div class="seg-control" role="group" aria-label="Piece">
+            <button data-fiber-piece="P" class="seg-btn" type="button"
+                    title="Pawn (direction-collapsed, Z2×Z2 symmetry only)">P</button>
             <button data-fiber-piece="N" class="seg-btn" type="button" title="Knight">N</button>
             <button data-fiber-piece="B" class="seg-btn" type="button" title="Bishop">B</button>
             <button data-fiber-piece="R" class="seg-btn" type="button" title="Rook">R</button>
@@ -132,6 +134,9 @@
             <button data-fiber-cmap="mono" class="seg-btn" type="button"
                     title="Greyscale elevation — stays out of channel's hue zone when both overlays are on">mono</button>
           </div>
+          <button id="fiber-follow-btn" data-fiber-follow class="seg-btn follow-btn"
+                  type="button" aria-pressed="false"
+                  title="Follow moves: auto-switch the piece to match whoever just moved as you step through plies">⇝</button>
           <span id="fiber-helper" class="fiber-helper mono dim" hidden></span>
         </div>
         <div id="board" class="board-host"></div>
@@ -237,7 +242,7 @@
 
   <footer id="footer">
     <span>Chess Spectral Lattice Fermion · mlehaptics project · 2026</span>
-    <span class="mono dim" id="version-tag">viewer v0.7.0 · spectralz v2 · 10 channels × 64 modes</span>
+    <span class="mono dim" id="version-tag">viewer v0.8.0 · spectralz v2 · 10 channels × 64 modes</span>
   </footer>
 
   <script type="module" src="./js/app.js"></script>

@@ -1,6 +1,6 @@
 # Chess Spectral Lattice Fermion Viewer
 
-![version](https://img.shields.io/badge/version-v0.7.0-8b5cf6?style=flat-square)
+![version](https://img.shields.io/badge/version-v0.8.0-8b5cf6?style=flat-square)
 ![spectralz](https://img.shields.io/badge/spectralz-v2-475569?style=flat-square)
 
 A drop-in spectral analysis instrument for chess corpora. Drop a `.7z`
@@ -73,13 +73,23 @@ does **not** change as you step through plies — this overlay is
 complementary to the existing per-channel overlay (⊞), not a
 replacement.
 
+- **Pawn (P):** direction-collapsed approximation — pawn moves are
+  asymmetric (directional), so the "proper" piece Laplacian isn't
+  symmetric. For display, we build a symmetrized adjacency from the
+  union of both colours' one-square moves (vertical step + all four
+  capture diagonals, no two-square advance). The resulting field
+  has only Z2×Z2 symmetry (axis reflections + 180° rotation), NOT
+  full D4 — 90° rotation would swap vertical advances with
+  horizontal moves, which pawns don't have. Useful as a visual, but
+  mathematically distinct from the other pieces; the verification
+  gates exercise the smaller symmetry group.
 - **Knight (N):** center-bright, corners-dim. Matches the §7
   qualitative 2:1 corner/center structure.
 - **Bishop (B):** diagonal-axis symmetric.
 - **Rook (R):** identically zero (rook rule content is in the
   diagonal channel, not the off-diagonal fiber; see §7b). The
   overlay paints a uniform neutral tint and displays a short helper
-  line — this is expected, not a bug.
+  note — this is expected, not a bug.
 - **Queen (Q):** proportional to bishop (queen = bishop + rook, and
   rook's off-diagonal contribution is zero; the bishop-queen cosine
   is 1.000 by construction).
@@ -144,9 +154,18 @@ The sub-controls that appear when the overlay is on:
 
 | Control | Options | Effect |
 |---|---|---|
-| piece    | N B R Q K            | which piece type to paint |
+| piece    | P N B R Q K          | which piece type to paint (pawn is direction-collapsed — see above) |
 | render   | smooth / tiles       | bilinear-upsampled canvas gradient vs. discrete per-square tiles |
 | colormap | viridis / div / mono | perceptually uniform / divergent-around-mean / greyscale elevation |
+| follow ⇝ | off / on             | auto-switch the piece to match whoever just moved as you step through plies |
+
+The **follow ⇝** toggle is convenient for stepping through a game
+without having to pick the piece by hand: step forward and the
+overlay flips to that piece's fiber field. Castling counts as the
+king (O-O and O-O-O both resolve to K); pawn moves (including
+captures and promotions) resolve to P; everything else reads off the
+leading SAN letter. On the starting position the selector holds
+whatever was last chosen.
 
 ### Combining with the channel overlay
 
@@ -176,8 +195,9 @@ channel.
 Range normalization is **per piece**, so each piece's [min, max]
 maps to the full color scale independently — this preserves visual
 detail across pieces with different absolute magnitudes. The URL
-hash carries `fiber=<piece>,<mode>,<cmap>` when the overlay is on,
-so you can share a specific view.
+hash carries `fiber=<piece>,<mode>,<cmap>` when the overlay is on
+(with an extra `,follow` suffix when auto-follow is enabled), so
+you can share a specific view.
 
 ### Regenerating the fiber data
 
@@ -191,13 +211,17 @@ python3 scripts/generate_fiber_norms.py
 
 The script builds the 8×8 grid Laplacian in the tensor-product
 eigenbasis, derives the rank-3 shared-fiber basis orthogonal to
-rook's per-square fluctuations, and writes the 5 × 64 field with
-per-piece range metadata. Verification gates enforced on write (and
-re-checked by `pytest -q tests/test_fiber_norms.py`):
+rook's per-square fluctuations, and writes the 6 × 64 field with
+per-piece range metadata. The V3 basis is derived from N/B/Q/K
+only; pawn is projected onto the same V3 afterwards so existing
+N/B/Q/K values stay stable. Verification gates enforced on write
+(and re-checked by `pytest -q tests/test_fiber_norms.py`):
 
 - rook field is identically zero (tol 1e-9)
-- each piece's field is D4-invariant under the 8 symmetries of the
-  square
+- each full-symmetry piece (N/B/R/Q/K) is D4-invariant under the 8
+  symmetries of the square
+- pawn is Z2×Z2-invariant but NOT D4-invariant (direction-collapsed
+  adjacency — see the pawn bullet above)
 - bishop-queen cosine > 0.999999
 - knight corner a1 < center d4
 

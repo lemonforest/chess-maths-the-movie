@@ -10,6 +10,54 @@ significant UX additions, patch bumps for fixes and infrastructure.
 The `.spectralz` format version is tracked separately in
 `README.md` and the file's header bytes.
 
+## v0.8.0 — 2026-04-21
+
+### Added
+- **Pawn fiber norm.** Adds a 6th piece (`P`) to the fiber overlay.
+  Pawn moves are asymmetric, so there is no formally-symmetric
+  pawn Laplacian in the same sense as N/B/R/Q/K; the field is
+  built from a symmetrized union of both colours' one-square moves
+  (vertical step + four capture diagonals, no two-square advance)
+  and is then projected onto the existing N/B/Q/K-derived V3 basis
+  — so existing values for the other pieces are byte-stable. The
+  resulting field has Z2×Z2 symmetry (axis reflections + 180°
+  rotation) but NOT full D4. This is disclosed in the data file
+  (`pawn_is_direction_collapsed: true`), in the P button's title,
+  and in `README.md`. Verification gates updated: D4 only applies
+  to N/B/R/Q/K; pawn gets a dedicated Klein-4 gate plus an
+  explicit "pawn must not be D4-symmetric" negative gate that
+  catches over-symmetrization bugs. The data file bumps from
+  `version: 1` to `version: 2` with pawn added to `piece_order`.
+- **`follow ⇝` auto-follow toggle** in the fiber sub-controls. When
+  on, stepping through plies auto-switches the fiber piece
+  selector to match whoever just moved (SAN's first character:
+  N/B/R/Q/K directly, `O-O`/`O-O-O` → K, lowercase file letter →
+  P). The starting position has no last-move and holds the prior
+  selection. The URL hash appends `,follow` to the `fiber=` query
+  string when on.
+
+### Changed
+- `data/fiber_norms.json` schema bump: `version` 1 → 2,
+  `piece_order` now `["pawn", "knight", "bishop", "rook", "queen",
+  "king"]`, new top-level `pawn_is_direction_collapsed: true`.
+  `generate_fiber_norms.py` extended with `pawn_adj()` and a
+  `_is_klein4_symmetric` helper; `tests/test_fiber_norms.py`
+  picks up parametrized pawn cases.
+- Fiber controls row: added P (piece selector) and ⇝ (follow)
+  buttons. Follow deliberately rendered as a single-glyph seg-btn
+  so the row doesn't wrap and re-introduce the board-boop from
+  v0.7.0's fix.
+
+### Fixed
+- Rook-helper note no longer sits permanently over the top of the
+  chessboard while R is selected. v0.7.0 took it out of the flex
+  flow so the row wouldn't wrap; v0.8.0 adds the fade behaviour on
+  top — the note flashes in for ~2.5s after R is picked, fades
+  out, and re-appears on R hover (with a ~400ms grace period on
+  mouse-leave so a flick off the button doesn't snap it away
+  mid-glance). The R button's `title` attribute also carries the
+  same text for a native hover tooltip.
+
 ## v0.7.0 — 2026-04-20
 
 ### Added
